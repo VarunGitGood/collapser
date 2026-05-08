@@ -36,7 +36,6 @@ func main() {
 		zap.Int("metrics_port", cfg.MetricsPort),
 		zap.String("backend_address", cfg.BackendAddress))
 
-	// Persistent backend connection — reused for every proxied call (H2).
 	var transportCreds credentials.TransportCredentials
 	if cfg.BackendUseTLS {
 		transportCreds = credentials.NewTLS(nil)
