@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/kelseyhightower/envconfig"
@@ -20,6 +21,10 @@ type Config struct {
 	// Collapser
 	ResultCacheDuration time.Duration `envconfig:"COLLAPSER_CACHE_DURATION" default:"100ms"`
 	CleanupInterval     time.Duration `envconfig:"COLLAPSER_CLEANUP_INTERVAL" default:"1s"`
+	// CacheErrors controls whether backend errors are stored in the result cache.
+	// Disabled by default: a single transient error should not block all callers
+	// for the full ResultCacheDuration.
+	CacheErrors bool `envconfig:"COLLAPSER_CACHE_ERRORS" default:"false"`
 
 	// Logging
 	LogLevel  string `envconfig:"LOG_LEVEL" default:"info"`
@@ -50,8 +55,17 @@ func (c *Config) Validate() error {
 	if c.BackendAddress == "" {
 		return fmt.Errorf("BACKEND_ADDRESS cannot be empty")
 	}
+	if _, _, err := net.SplitHostPort(c.BackendAddress); err != nil {
+		return fmt.Errorf("BACKEND_ADDRESS must be host:port, got %q: %w", c.BackendAddress, err)
+	}
 	if c.BackendTimeout <= 0 {
 		return fmt.Errorf("BACKEND_TIMEOUT must be positive")
+	}
+	if c.ResultCacheDuration < 0 {
+		return fmt.Errorf("COLLAPSER_CACHE_DURATION must be non-negative")
+	}
+	if c.CleanupInterval <= 0 {
+		return fmt.Errorf("COLLAPSER_CLEANUP_INTERVAL must be positive")
 	}
 	return nil
 }

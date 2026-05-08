@@ -38,7 +38,7 @@ var (
 
 	BackendLatency = promauto.NewHistogram(prometheus.HistogramOpts{
 		Name:    "collapser_backend_latency_seconds",
-		Help:    "Backend backend call duration in seconds",
-		Buckets: prometheus.DefBuckets,
+		Help:    "Backend call duration in seconds",
+		Buckets: prometheus.ExponentialBuckets(0.0001, 2, 18), // 0.1ms–13s
 	})
 )

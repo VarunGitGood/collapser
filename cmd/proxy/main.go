@@ -15,16 +15,17 @@ import (
 	"github.com/VarunGitGood/collapser-grpc/internal/proxy"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
-	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("failed to load config: %v", err)
 	}
 
-	// Initialize logger
 	if err := logger.Init(cfg.LogLevel, cfg.LogFormat); err != nil {
 		log.Fatalf("failed to initialize logger: %v", err)
 	}
@@ -35,22 +36,33 @@ func main() {
 		zap.Int("metrics_port", cfg.MetricsPort),
 		zap.String("backend_address", cfg.BackendAddress))
 
-	// Initialize Collapser
+	// Persistent backend connection — reused for every proxied call (H2).
+	var transportCreds credentials.TransportCredentials
+	if cfg.BackendUseTLS {
+		transportCreds = credentials.NewTLS(nil)
+	} else {
+		transportCreds = insecure.NewCredentials()
+	}
+	conn, err := grpc.NewClient(cfg.BackendAddress, grpc.WithTransportCredentials(transportCreds))
+	if err != nil {
+		logger.Fatal("failed to create backend connection", zap.Error(err))
+	}
+	defer conn.Close()
+
 	collapserCfg := collapser.Config{
 		ResultCacheDuration: cfg.ResultCacheDuration,
 		BackendTimeout:      cfg.BackendTimeout,
 		CleanupInterval:     cfg.CleanupInterval,
+		CacheErrors:         cfg.CacheErrors,
 	}
 	c := collapser.NewCollapser(collapserCfg)
 	if err := c.Start(); err != nil {
 		logger.Fatal("failed to start collapser", zap.Error(err))
 	}
-	defer c.Stop()
 
-	// Initialize Proxy Handler
-	proxyHandler := proxy.NewHandler(c, cfg.BackendAddress)
+	proxyHandler := proxy.NewHandler(c, conn)
 
-	// Start Metrics Server
+	// Metrics + health server.
 	go func() {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.Handler())
@@ -63,22 +75,25 @@ func main() {
 		}
 	}()
 
-	// Start gRPC Proxy Server
 	lis, err := net.Listen("tcp", ":"+strconv.Itoa(cfg.GRPCPort))
 	if err != nil {
 		logger.Fatal("failed to listen", zap.Error(err))
 	}
 
-	// Listen for OS signals for graceful shutdown
+	// Server is owned by main so GracefulStop can be called on signal (H3).
+	srv := proxyHandler.NewServer()
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		if err := proxyHandler.Serve(lis); err != nil {
+		if err := srv.Serve(lis); err != nil {
 			logger.Error("proxy server failed", zap.Error(err))
 		}
 	}()
 
 	<-sigCh
 	logger.Info("Shutting down gracefully...")
+	srv.GracefulStop() // drain in-flight gRPC calls before closing
+	c.Stop()           // notify any waiting followers
 }

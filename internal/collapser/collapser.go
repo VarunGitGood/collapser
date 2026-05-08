@@ -23,6 +23,10 @@ type Config struct {
 	ResultCacheDuration time.Duration
 	BackendTimeout      time.Duration
 	CleanupInterval     time.Duration
+	// CacheErrors controls whether backend errors are stored in the result cache.
+	// Defaults to false — a single transient error should not block all requests
+	// for the full ResultCacheDuration.
+	CacheErrors bool
 }
 
 type Collapser struct {
@@ -77,7 +81,11 @@ func (c *Collapser) Stop() error {
 	defer c.mu.Unlock()
 
 	for key, call := range c.inflight {
-		c.notifyWaiters(call, result{err: fmt.Errorf("shutting down")})
+		call.mu.Lock()
+		waiters := call.waiters
+		call.waiters = nil
+		call.mu.Unlock()
+		c.notifyWaiters(call, result{err: fmt.Errorf("shutting down")}, waiters...)
 		delete(c.inflight, key)
 	}
 
@@ -143,7 +151,7 @@ func (c *Collapser) Execute(ctx context.Context, key string, fn func(context.Con
 	defer cancel()
 
 	start := time.Now()
-	data, err := fn(backendCtx)
+	data, err := c.callWithRecovery(fn, backendCtx)
 	monitoring.BackendLatency.Observe(time.Since(start).Seconds())
 
 	res := result{data: data, err: err}
@@ -162,15 +170,31 @@ func (c *Collapser) Execute(ctx context.Context, key string, fn func(context.Con
 	c.mu.Lock()
 	delete(c.inflight, key)
 	monitoring.InflightRequests.Dec()
-	c.cache[key] = &cachedResult{
-		data:      data,
-		err:       err,
-		expiresAt: time.Now().Add(c.config.ResultCacheDuration),
+	// Only cache errors when explicitly opted in — a transient backend failure
+	// should not block all callers for the full ResultCacheDuration.
+	if err == nil || c.config.CacheErrors {
+		c.cache[key] = &cachedResult{
+			data:      data,
+			err:       err,
+			expiresAt: time.Now().Add(c.config.ResultCacheDuration),
+		}
+		monitoring.CachedResults.Inc()
 	}
-	monitoring.CachedResults.Inc()
 	c.mu.Unlock()
 
 	return data, err
+}
+
+// callWithRecovery runs fn and converts any panic into an error so followers
+// are always notified and never left hanging.
+func (c *Collapser) callWithRecovery(fn func(context.Context) ([]byte, error), ctx context.Context) (data []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("panic in backend call", zap.Any("panic", r))
+			err = fmt.Errorf("internal panic: %v", r)
+		}
+	}()
+	return fn(ctx)
 }
 
 func (c *Collapser) notifyWaiters(call *inflightCall, res result, waiters ...chan result) {
