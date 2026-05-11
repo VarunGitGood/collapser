@@ -35,3 +35,7 @@ Thumbs.db
 # Generated files
 *.pb.go
 *.pb.gw.go
+
+# Claude Code
+CLAUDE.md
+docs
