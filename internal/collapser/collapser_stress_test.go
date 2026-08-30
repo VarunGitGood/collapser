@@ -2,6 +2,7 @@ package collapser
 
 import (
 	"context"
+	"errors"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -15,11 +16,11 @@ func TestStress_HighConcurrency(t *testing.T) {
 		BackendTimeout:      10 * time.Second,
 		CleanupInterval:     1 * time.Second,
 	})
-	c.Start()
-	defer c.Stop()
+	_ = c.Start()
+	defer func() { _ = c.Stop() }()
 
 	var backendCalls int64
-	var errors int64
+	var errCount int64
 
 	fn := func(ctx context.Context) ([]byte, error) {
 		atomic.AddInt64(&backendCalls, 1)
@@ -37,7 +38,7 @@ func TestStress_HighConcurrency(t *testing.T) {
 			defer wg.Done()
 			_, err := c.Execute(context.Background(), "key", fn)
 			if err != nil {
-				atomic.AddInt64(&errors, 1)
+				atomic.AddInt64(&errCount, 1)
 			}
 		}()
 	}
@@ -47,13 +48,13 @@ func TestStress_HighConcurrency(t *testing.T) {
 	t.Logf("High Concurrency Test:")
 	t.Logf("  Requests: %d", N)
 	t.Logf("  Backend calls: %d", backendCalls)
-	t.Logf("  Errors: %d", errors)
+	t.Logf("  Errors: %d", errCount)
 	t.Logf("  Collapse ratio: %.1f:1", float64(N)/float64(backendCalls))
 	t.Logf("  Duration: %v", elapsed)
 	t.Logf("  Throughput: %.0f req/s", float64(N)/elapsed.Seconds())
 
-	if errors > 0 {
-		t.Errorf("Expected 0 errors, got %d", errors)
+	if errCount > 0 {
+		t.Errorf("Expected 0 errors, got %d", errCount)
 	}
 	if backendCalls > 10 {
 		t.Errorf("Too many backend calls: %d (expected <10 for 10k requests)", backendCalls)
@@ -70,12 +71,12 @@ func TestStress_SustainedLoad(t *testing.T) {
 		BackendTimeout:      10 * time.Second,
 		CleanupInterval:     1 * time.Second,
 	})
-	c.Start()
-	defer c.Stop()
+	_ = c.Start()
+	defer func() { _ = c.Stop() }()
 
 	var totalRequests int64
 	var backendCalls int64
-	var errors int64
+	var errCount int64
 
 	fn := func(ctx context.Context) ([]byte, error) {
 		atomic.AddInt64(&backendCalls, 1)
@@ -99,8 +100,8 @@ func TestStress_SustainedLoad(t *testing.T) {
 				default:
 					atomic.AddInt64(&totalRequests, 1)
 					_, err := c.Execute(ctx, "sustained-key", fn)
-					if err != nil && err != context.Canceled && err != context.DeadlineExceeded {
-						atomic.AddInt64(&errors, 1)
+					if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+						atomic.AddInt64(&errCount, 1)
 					}
 					time.Sleep(10 * time.Millisecond)
 				}
@@ -112,12 +113,12 @@ func TestStress_SustainedLoad(t *testing.T) {
 	t.Logf("Sustained Load Test (60s):")
 	t.Logf("  Total requests: %d", totalRequests)
 	t.Logf("  Backend calls: %d", backendCalls)
-	t.Logf("  Errors: %d", errors)
+	t.Logf("  Errors: %d", errCount)
 	t.Logf("  Collapse ratio: %.1f:1", float64(totalRequests)/float64(backendCalls))
 	t.Logf("  RPS: %.0f", float64(totalRequests)/60.0)
 
-	if errors > totalRequests/100 {
-		t.Errorf("Too many errors: %d (>1%%)", errors)
+	if errCount > totalRequests/100 {
+		t.Errorf("Too many errors: %d (>1%%)", errCount)
 	}
 }
 
@@ -135,8 +136,8 @@ func TestStress_MemoryLeak(t *testing.T) {
 		BackendTimeout:      10 * time.Second,
 		CleanupInterval:     1 * time.Second,
 	})
-	c.Start()
-	defer c.Stop()
+	_ = c.Start()
+	defer func() { _ = c.Stop() }()
 
 	fn := func(ctx context.Context) ([]byte, error) {
 		time.Sleep(10 * time.Millisecond)
@@ -149,7 +150,7 @@ func TestStress_MemoryLeak(t *testing.T) {
 		for i := 0; i < 1000; i++ {
 			go func() {
 				defer wg.Done()
-				c.Execute(context.Background(), "key", fn)
+				_, _ = c.Execute(context.Background(), "key", fn)
 			}()
 		}
 		wg.Wait()
@@ -190,7 +191,7 @@ func TestStress_GoroutineLeak(t *testing.T) {
 		BackendTimeout:      10 * time.Second,
 		CleanupInterval:     1 * time.Second,
 	})
-	c.Start()
+	_ = c.Start()
 
 	fn := func(ctx context.Context) ([]byte, error) {
 		return []byte("ok"), nil
@@ -201,12 +202,12 @@ func TestStress_GoroutineLeak(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c.Execute(context.Background(), "key", fn)
+			_, _ = c.Execute(context.Background(), "key", fn)
 		}()
 	}
 	wg.Wait()
 
-	c.Stop()
+	_ = c.Stop()
 	time.Sleep(200 * time.Millisecond)
 	runtime.GC()
 
