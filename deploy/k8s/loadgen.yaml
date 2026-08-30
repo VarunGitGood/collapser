@@ -1,0 +1,32 @@
+# In-cluster load generator.
+#
+# Running this inside the mesh rather than port-forwarding from the host is what
+# makes both hops visible in Istio's telemetry: the client's own Envoy reports
+# the requests it sends to the proxy, and the backend's Envoy reports the far
+# smaller number that survive collapsing.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  labels: {app: loadgen}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: loadgen}
+  template:
+    metadata:
+      labels: {app: loadgen, version: v1}
+    spec:
+      containers:
+        - name: loadgen
+          image: collapser-loadgen:latest
+          imagePullPolicy: Never
+          env:
+            - {name: PROXY_ADDRESS,  value: "collapser-proxy:50052"}
+            - {name: LOOP,           value: "true"}
+            - {name: CONCURRENCY,    value: "600"}
+            - {name: DISTINCT_KEYS,  value: "25"}
+            - {name: BURST_INTERVAL, value: "250ms"}
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: 1000m, memory: 256Mi}

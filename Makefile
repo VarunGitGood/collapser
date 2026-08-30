@@ -11,6 +11,7 @@ CLIENT_PATH=./cmd/client/main.go
 # Docker variables
 DOCKER_IMAGE=collapser-proxy
 BACKEND_IMAGE=collapser-backend
+LOADGEN_IMAGE=collapser-loadgen
 DOCKER_TAG=latest
 
 # Cluster variables
@@ -131,9 +132,10 @@ deps-vendor: ## Vendor dependencies
 # Container & Cluster Targets
 # ============================================================================
 
-docker: ## Build the proxy and demo backend images
+docker: ## Build the proxy, backend and load generator images
 	@docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) --target proxy .
 	@docker build -t $(BACKEND_IMAGE):$(DOCKER_TAG) --target backend .
+	@docker build -t $(LOADGEN_IMAGE):$(DOCKER_TAG) --target loadgen .
 
 cluster: ## Create a local kind cluster with Istio installed
 	@./deploy/scripts/cluster-up.sh
@@ -141,6 +143,7 @@ cluster: ## Create a local kind cluster with Istio installed
 deploy: docker ## Load images into kind and apply the k8s + Istio manifests
 	@kind load docker-image $(DOCKER_IMAGE):$(DOCKER_TAG) --name $(KIND_CLUSTER)
 	@kind load docker-image $(BACKEND_IMAGE):$(DOCKER_TAG) --name $(KIND_CLUSTER)
+	@kind load docker-image $(LOADGEN_IMAGE):$(DOCKER_TAG) --name $(KIND_CLUSTER)
 	@kubectl apply -f deploy/k8s/
 	@kubectl apply -f deploy/istio/
 	@kubectl rollout status deploy/collapser-proxy --timeout=180s
