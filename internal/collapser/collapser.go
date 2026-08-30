@@ -2,22 +2,19 @@ package collapser
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/VarunGitGood/collapser-grpc/internal/logger"
 	"github.com/VarunGitGood/collapser-grpc/internal/monitoring"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
-type State int32
-
-const (
-	StateExecuting State = 0
-	StateDone      State = 1
-)
+// ErrClosed is returned by Execute after Stop has been called.
+var ErrClosed = errors.New("collapser: closed")
 
 type Config struct {
 	ResultCacheDuration time.Duration
@@ -27,6 +24,9 @@ type Config struct {
 	// Defaults to false — a single transient error should not block all requests
 	// for the full ResultCacheDuration.
 	CacheErrors bool
+	// MaxCacheEntries caps the result cache so a key-diverse workload cannot grow
+	// it without bound between cleanup ticks. Zero means unlimited.
+	MaxCacheEntries int
 }
 
 type Collapser struct {
@@ -36,26 +36,29 @@ type Collapser struct {
 	inflight map[string]*inflightCall
 	cache    map[string]*cachedResult
 
-	stopCh chan struct{}
-	wg     sync.WaitGroup
+	closed   bool
+	stopCh   chan struct{}
+	stopOnce sync.Once
+	wg       sync.WaitGroup
 }
 
+// inflightCall is the shared state between the leader executing the backend
+// call and every follower waiting on it.
+//
+// data and err are written by the leader before it closes done, and read by
+// followers only after receiving from done. The close/receive pair establishes
+// the happens-before edge, so no additional lock is needed on the result and a
+// follower joining an inflight call allocates nothing.
 type inflightCall struct {
-	state   atomic.Int32
-	waiters []chan result
-	res     *result
-	mu      sync.Mutex
+	done chan struct{}
+	data []byte
+	err  error
 }
 
 type cachedResult struct {
 	data      []byte
 	err       error
 	expiresAt time.Time
-}
-
-type result struct {
-	data []byte
-	err  error
 }
 
 func NewCollapser(cfg Config) *Collapser {
@@ -73,25 +76,26 @@ func (c *Collapser) Start() error {
 	return nil
 }
 
+// Stop shuts down the cleanup loop and rejects new work. It is safe to call
+// more than once.
+//
+// Stop deliberately does not cancel calls already in flight: the leader owns
+// data and err until it closes done, so tearing that state down from another
+// goroutine would race. Every leader is bounded by BackendTimeout, and the gRPC
+// server's GracefulStop drains in-flight requests before Stop is reached.
 func (c *Collapser) Stop() error {
-	close(c.stopCh)
-	c.wg.Wait()
-
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.closed = true
+	c.mu.Unlock()
 
-	for key, call := range c.inflight {
-		call.mu.Lock()
-		waiters := call.waiters
-		call.waiters = nil
-		call.mu.Unlock()
-		c.notifyWaiters(call, result{err: fmt.Errorf("shutting down")}, waiters...)
-		delete(c.inflight, key)
-	}
-
+	c.stopOnce.Do(func() { close(c.stopCh) })
+	c.wg.Wait()
 	return nil
 }
 
+// Execute deduplicates concurrent calls for the same key. The first caller
+// becomes the leader and runs fn; every caller arriving while that call is in
+// flight becomes a follower and receives the leader's result.
 func (c *Collapser) Execute(ctx context.Context, key string, fn func(context.Context) ([]byte, error)) ([]byte, error) {
 	monitoring.RequestsTotal.Inc()
 
@@ -99,119 +103,103 @@ func (c *Collapser) Execute(ctx context.Context, key string, fn func(context.Con
 		return nil, err
 	}
 
-	// 1. Check result cache
+	// 1. Result cache.
 	c.mu.RLock()
-	if cached, exists := c.cache[key]; exists {
-		if time.Now().Before(cached.expiresAt) {
-			c.mu.RUnlock()
-			monitoring.CacheHitsTotal.Inc()
-			return cached.data, cached.err
-		}
+	if cached, exists := c.cache[key]; exists && time.Now().Before(cached.expiresAt) {
+		c.mu.RUnlock()
+		monitoring.CacheHitsTotal.Inc()
+		return cached.data, cached.err
 	}
 	c.mu.RUnlock()
 
-	// 2. Check inflight
+	// 2. Join an inflight call, or become the leader.
 	c.mu.Lock()
-	if call, exists := c.inflight[key]; exists {
-		monitoring.CollapsedRequestsTotal.Inc()
-		waiterCh := make(chan result, 1)
-
-		call.mu.Lock()
-		// Double check if it just finished
-		if State(call.state.Load()) == StateDone {
-			res := *call.res
-			call.mu.Unlock()
-			c.mu.Unlock()
-			return res.data, res.err
-		}
-		call.waiters = append(call.waiters, waiterCh)
-		call.mu.Unlock()
+	if c.closed {
 		c.mu.Unlock()
+		return nil, ErrClosed
+	}
+	if call, exists := c.inflight[key]; exists {
+		c.mu.Unlock()
+		monitoring.CollapsedRequestsTotal.Inc()
 
+		// Zero allocations on this path: no per-waiter channel, no bookkeeping.
 		select {
-		case res := <-waiterCh:
-			return res.data, res.err
+		case <-call.done:
+			return call.data, call.err
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
 	}
 
-	// 3. Become leader
-	call := &inflightCall{
-		waiters: make([]chan result, 0),
-	}
-	call.state.Store(int32(StateExecuting))
+	call := &inflightCall{done: make(chan struct{})}
 	c.inflight[key] = call
 	monitoring.InflightRequests.Inc()
 	monitoring.BackendCallsTotal.Inc()
 	c.mu.Unlock()
 
-	// Detached context for backend
+	// 3. Run the backend call on a context detached from the caller, so one
+	// client cancelling does not abort the shared work for every follower.
 	backendCtx, cancel := context.WithTimeout(context.Background(), c.config.BackendTimeout)
 	defer cancel()
 
 	start := time.Now()
-	data, err := c.callWithRecovery(fn, backendCtx)
+	data, err := c.callWithRecovery(backendCtx, fn)
 	monitoring.BackendLatency.Observe(time.Since(start).Seconds())
 
-	res := result{data: data, err: err}
+	// 4. Publish the result to every follower. The close must happen before the
+	// key is removed from the inflight map, so a follower that grabbed the
+	// pointer is never left waiting on a call nobody will finish.
+	call.data = data
+	call.err = err
+	close(call.done)
 
-	// 4. Update inflight state and notify
-	call.mu.Lock()
-	call.res = &res
-	call.state.Store(int32(StateDone))
-	waiters := call.waiters
-	call.waiters = nil
-	call.mu.Unlock()
-
-	c.notifyWaiters(call, res, waiters...)
-
-	// 5. Cache result and move from inflight to cache
+	// 5. Retire the inflight entry and cache the result.
 	c.mu.Lock()
 	delete(c.inflight, key)
 	monitoring.InflightRequests.Dec()
-	// Only cache errors when explicitly opted in — a transient backend failure
-	// should not block all callers for the full ResultCacheDuration.
-	if err == nil || c.config.CacheErrors {
-		c.cache[key] = &cachedResult{
-			data:      data,
-			err:       err,
-			expiresAt: time.Now().Add(c.config.ResultCacheDuration),
-		}
-		monitoring.CachedResults.Inc()
-	}
+	c.cacheResultLocked(key, data, err)
 	c.mu.Unlock()
 
 	return data, err
 }
 
-// callWithRecovery runs fn and converts any panic into an error so followers
-// are always notified and never left hanging.
-func (c *Collapser) callWithRecovery(fn func(context.Context) ([]byte, error), ctx context.Context) (data []byte, err error) {
+// cacheResultLocked stores a result under key. Callers must hold c.mu.
+func (c *Collapser) cacheResultLocked(key string, data []byte, err error) {
+	// Errors are cached only when explicitly opted in: a transient backend
+	// failure should not be replayed to every caller for the full TTL.
+	if err != nil && !c.config.CacheErrors {
+		return
+	}
+	if c.config.ResultCacheDuration <= 0 {
+		return
+	}
+	_, replacing := c.cache[key]
+	if !replacing && c.config.MaxCacheEntries > 0 && len(c.cache) >= c.config.MaxCacheEntries {
+		return
+	}
+	c.cache[key] = &cachedResult{
+		data:      data,
+		err:       err,
+		expiresAt: time.Now().Add(c.config.ResultCacheDuration),
+	}
+	// Only count a genuinely new entry; replacing an expired-but-uncollected
+	// entry would otherwise drift the gauge upward forever.
+	if !replacing {
+		monitoring.CachedResults.Inc()
+	}
+}
+
+// callWithRecovery runs fn and converts any panic into an error, so the leader
+// always reaches the close(call.done) below and followers are never stranded.
+func (c *Collapser) callWithRecovery(ctx context.Context, fn func(context.Context) ([]byte, error)) (data []byte, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Error("panic in backend call", zap.Any("panic", r))
-			err = fmt.Errorf("internal panic: %v", r)
+			data = nil
+			err = status.Errorf(codes.Internal, "collapser: panic in backend call: %v", r)
 		}
 	}()
 	return fn(ctx)
-}
-
-func (c *Collapser) notifyWaiters(call *inflightCall, res result, waiters ...chan result) {
-	for _, ch := range waiters {
-		func(waiterCh chan result) {
-			defer func() {
-				if r := recover(); r != nil {
-					logger.Error("panic notifying waiter", zap.Any("panic", r))
-				}
-			}()
-			select {
-			case waiterCh <- res:
-			default:
-			}
-			close(waiterCh)
-		}(ch)
-	}
 }
 
 func (c *Collapser) cleanupLoop() {
