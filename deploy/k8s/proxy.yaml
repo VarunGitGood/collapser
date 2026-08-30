@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collapser-proxy
+  labels: {app: collapser-proxy}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: collapser-proxy}
+  template:
+    metadata:
+      labels: {app: collapser-proxy, version: v1}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "2112"
+        prometheus.io/path: /metrics
+    spec:
+      containers:
+        - name: proxy
+          image: collapser-proxy:latest
+          imagePullPolicy: Never   # image is side-loaded into kind, never pulled
+          ports:
+            - {name: grpc, containerPort: 50052}
+            - {name: metrics, containerPort: 2112}
+          env:
+            - {name: BACKEND_ADDRESS, value: "hello-backend:50051"}
+            - {name: COLLAPSER_CACHE_DURATION, value: "100ms"}
+            - {name: COLLAPSER_MAX_CACHE_ENTRIES, value: "10000"}
+            - {name: LOG_FORMAT, value: "json"}
+          # Liveness never depends on the backend: restarting the proxy during a
+          # backend outage would drop the collapsing that protects it.
+          livenessProbe:
+            httpGet: {path: /health, port: metrics}
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          # Readiness does, so a rolling deploy never routes into a proxy whose
+          # backend channel is not usable yet.
+          readinessProbe:
+            httpGet: {path: /ready, port: metrics}
+            initialDelaySeconds: 1
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: 1000m, memory: 256Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: collapser-proxy
+  labels: {app: collapser-proxy}
+spec:
+  selector: {app: collapser-proxy}
+  ports:
+    - {name: grpc-collapser, port: 50052, targetPort: grpc}
+    - {name: http-metrics, port: 2112, targetPort: metrics}

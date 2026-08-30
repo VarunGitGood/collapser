@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-backend
+  labels: {app: hello-backend}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: hello-backend}
+  template:
+    metadata:
+      labels: {app: hello-backend, version: v1}
+    spec:
+      containers:
+        - name: backend
+          image: collapser-backend:latest
+          imagePullPolicy: Never   # image is side-loaded into kind, never pulled
+          ports:
+            - {name: grpc, containerPort: 50051}
+            - {name: stats, containerPort: 8080}
+          env:
+            - {name: BACKEND_LATENCY, value: "50ms"}
+          readinessProbe:
+            httpGet: {path: /health, port: stats}
+            initialDelaySeconds: 1
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 50m, memory: 32Mi}
+            limits: {cpu: 500m, memory: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-backend
+  labels: {app: hello-backend}
+spec:
+  selector: {app: hello-backend}
+  ports:
+    # Istio routes by port name; the grpc- prefix is what makes it parse HTTP/2
+    # and produce per-RPC telemetry instead of treating this as opaque TCP.
+    - {name: grpc-hello, port: 50051, targetPort: grpc}
+    - {name: http-stats, port: 8080, targetPort: stats}

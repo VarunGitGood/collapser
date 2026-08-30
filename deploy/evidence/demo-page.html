@@ -1,0 +1,795 @@
+<title>Collapser</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+
+<style>
+/* ── Palette: logic-analyzer. Indigo-slate grounds, signal amber accent,
+      teal for the collapsed state, ember for unmitigated load. ───────── */
+:root {
+  --ground:      #F1F2F7;
+  --surface:     #FFFFFF;
+  --surface-2:   #E7E9F1;
+  --line:        #D2D6E4;
+  --line-strong: #B3BACE;
+  --ink:         #1B1E2B;
+  --ink-2:       #4A5069;
+  --ink-3:       #767D96;
+  --amber:       #B5741A;
+  --amber-bright:#E8A33D;
+  --teal:        #1F7D68;
+  --ember:       #C0432F;
+  --glow:        rgba(232,163,61,.16);
+
+  --f-display: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --f-prose:   "Source Serif 4", Georgia, serif;
+  --f-data:    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --measure: 64ch;
+  --shell: 1180px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:      #12141F;
+    --surface:     #1A1D2B;
+    --surface-2:   #232739;
+    --line:        #2E3348;
+    --line-strong: #434A66;
+    --ink:         #EDEFF6;
+    --ink-2:       #AEB5CB;
+    --ink-3:       #7C849E;
+    --amber:       #E8A33D;
+    --amber-bright:#F5BE68;
+    --teal:        #57C4A8;
+    --ember:       #E8705B;
+    --glow:        rgba(232,163,61,.13);
+  }
+}
+:root[data-theme="dark"] {
+  --ground:      #12141F;
+  --surface:     #1A1D2B;
+  --surface-2:   #232739;
+  --line:        #2E3348;
+  --line-strong: #434A66;
+  --ink:         #EDEFF6;
+  --ink-2:       #AEB5CB;
+  --ink-3:       #7C849E;
+  --amber:       #E8A33D;
+  --amber-bright:#F5BE68;
+  --teal:        #57C4A8;
+  --ember:       #E8705B;
+  --glow:        rgba(232,163,61,.13);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--f-display);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.shell { max-width: var(--shell); margin: 0 auto; padding: 0 28px; }
+.prose { max-width: var(--measure); }
+
+h1, h2, h3 { text-wrap: balance; margin: 0; font-weight: 600; letter-spacing: -.02em; }
+
+.eyebrow {
+  font-family: var(--f-data);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+p { margin: 0 0 1.1em; }
+.prose p { font-family: var(--f-prose); font-size: 17.5px; line-height: 1.66; color: var(--ink-2); }
+.prose strong { color: var(--ink); font-weight: 600; }
+code { font-family: var(--f-data); font-size: .87em; background: var(--surface-2); padding: .12em .38em; border-radius: 3px; }
+
+/* ── Header ───────────────────────────────────────────────────────── */
+header { border-bottom: 1px solid var(--line); background: var(--surface); }
+.head-in { display: flex; flex-wrap: wrap; gap: 12px 22px; align-items: baseline; padding: 22px 28px; max-width: var(--shell); margin: 0 auto; }
+.wordmark { font-size: 19px; font-weight: 700; letter-spacing: -.03em; }
+.wordmark span { color: var(--amber); }
+.head-meta { margin-left: auto; display: flex; gap: 20px; flex-wrap: wrap; }
+.head-meta span { font-family: var(--f-data); font-size: 11.5px; color: var(--ink-3); }
+
+/* ── Hero ─────────────────────────────────────────────────────────── */
+.hero { padding: 60px 0 12px; }
+.hero h1 { font-size: clamp(34px, 5.4vw, 58px); line-height: 1.04; max-width: 17ch; }
+.hero h1 em { font-style: normal; color: var(--amber); }
+.hero-sub { font-family: var(--f-prose); font-size: clamp(17px, 2vw, 20px); color: var(--ink-2); max-width: 56ch; margin-top: 20px; line-height: 1.55; }
+
+.headline-stat {
+  margin-top: 34px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px;
+  padding: 18px 22px; border: 1px solid var(--line); border-left: 3px solid var(--amber);
+  background: var(--surface); border-radius: 2px;
+}
+.headline-stat b { font-family: var(--f-data); font-size: 26px; font-weight: 700; color: var(--amber); font-variant-numeric: tabular-nums; }
+.headline-stat span { font-family: var(--f-prose); font-size: 16px; color: var(--ink-2); }
+
+/* ── Instrument panel (simulator) ─────────────────────────────────── */
+.panel {
+  margin: 44px 0 0; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 3px; overflow: hidden;
+}
+.panel-head {
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+  padding: 13px 20px; border-bottom: 1px solid var(--line); background: var(--surface-2);
+}
+.panel-head .eyebrow { margin-right: auto; }
+.sim-note { font-family: var(--f-data); font-size: 10.5px; color: var(--ink-3); letter-spacing: .04em; }
+
+#stage { display: block; width: 100%; height: 288px; }
+
+.controls {
+  display: flex; flex-wrap: wrap; gap: 18px 26px; align-items: center;
+  padding: 16px 20px; border-top: 1px solid var(--line);
+}
+.ctl { display: flex; align-items: center; gap: 11px; }
+.ctl label { font-family: var(--f-data); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+
+input[type=range] { -webkit-appearance: none; appearance: none; width: 168px; height: 3px; background: var(--line-strong); border-radius: 2px; outline: none; }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 15px; height: 15px; border-radius: 50%; background: var(--amber); cursor: pointer; border: 0; }
+input[type=range]::-moz-range-thumb { width: 15px; height: 15px; border-radius: 50%; background: var(--amber); cursor: pointer; border: 0; }
+input[type=range]:focus-visible { outline: 2px solid var(--amber); outline-offset: 5px; }
+
+.count-out { font-family: var(--f-data); font-size: 15px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; min-width: 4.4ch; }
+
+.switch { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 2px; overflow: hidden; }
+.switch button {
+  font-family: var(--f-data); font-size: 11px; letter-spacing: .07em; text-transform: uppercase;
+  padding: 7px 13px; border: 0; background: transparent; color: var(--ink-3); cursor: pointer;
+}
+.switch button[aria-pressed="true"] { background: var(--amber); color: #16180F; font-weight: 700; }
+.switch button:focus-visible { outline: 2px solid var(--amber); outline-offset: -2px; }
+
+.fire {
+  font-family: var(--f-data); font-size: 12px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
+  padding: 10px 22px; border: 0; border-radius: 2px; background: var(--ink); color: var(--ground); cursor: pointer;
+}
+.fire:hover { background: var(--amber); color: #16180F; }
+.fire:disabled { opacity: .4; cursor: default; }
+.fire:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
+
+.readout { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); border-top: 1px solid var(--line); }
+.readout div { padding: 15px 20px; border-right: 1px solid var(--line); }
+.readout div:last-child { border-right: 0; }
+.readout dt { font-family: var(--f-data); font-size: 10.5px; letter-spacing: .11em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 5px; }
+.readout dd { margin: 0; font-family: var(--f-data); font-size: 27px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.v-sent { color: var(--ink); }
+.v-hit  { color: var(--ember); }
+.v-hit.is-good { color: var(--teal); }
+.v-ratio{ color: var(--amber); }
+
+/* ── Sections ─────────────────────────────────────────────────────── */
+section { padding: 64px 0; border-top: 1px solid var(--line); margin-top: 60px; }
+section:first-of-type { border-top: 0; }
+h2 { font-size: clamp(24px, 3.2vw, 33px); margin-bottom: 6px; }
+.sec-head { margin-bottom: 30px; }
+.sec-head .eyebrow { display: block; margin-bottom: 11px; }
+
+/* ── Mechanism ────────────────────────────────────────────────────── */
+.paths { display: grid; gap: 14px; margin: 30px 0 0; }
+@media (min-width: 760px) { .paths { grid-template-columns: repeat(3, 1fr); } }
+.path { background: var(--surface); border: 1px solid var(--line); border-top: 2px solid var(--line-strong); border-radius: 2px; padding: 20px; }
+.path.p1 { border-top-color: var(--teal); }
+.path.p2 { border-top-color: var(--amber); }
+.path.p3 { border-top-color: var(--ember); }
+.path h3 { font-size: 15px; margin-bottom: 8px; display: flex; align-items: baseline; gap: 9px; }
+.path h3 b { font-family: var(--f-data); font-size: 11px; color: var(--ink-3); font-weight: 500; }
+.path p { font-family: var(--f-prose); font-size: 15.5px; color: var(--ink-2); margin: 0 0 10px; line-height: 1.55; }
+.path .cost { font-family: var(--f-data); font-size: 11.5px; color: var(--ink-3); border-top: 1px dashed var(--line); padding-top: 10px; margin: 0; }
+.path .cost b { color: var(--ink); font-weight: 700; }
+
+/* ── Data tables ──────────────────────────────────────────────────── */
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 3px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+caption { text-align: left; padding: 14px 18px; border-bottom: 1px solid var(--line); background: var(--surface-2); font-family: var(--f-data); font-size: 10.5px; letter-spacing: .11em; text-transform: uppercase; color: var(--ink-3); }
+th, td { padding: 11px 18px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+thead th { font-family: var(--f-data); font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); font-weight: 500; }
+tbody tr:last-child td { border-bottom: 0; }
+td.num, th.num { text-align: right; font-family: var(--f-data); font-variant-numeric: tabular-nums; }
+td.hero-num { color: var(--teal); font-weight: 700; }
+.bar { position: relative; min-width: 130px; }
+.bar i { display: block; height: 7px; background: var(--ember); border-radius: 1px; }
+.bar i.good { background: var(--teal); }
+
+.zero { color: var(--teal); font-weight: 700; }
+
+/* ── Verify callout ───────────────────────────────────────────────── */
+.verify { margin-top: 26px; border: 1px solid var(--line); border-left: 3px solid var(--teal); background: var(--surface); border-radius: 2px; padding: 20px 22px; }
+.verify h3 { font-size: 15px; margin-bottom: 12px; }
+.verify ol { margin: 0; padding-left: 20px; }
+.verify li { font-family: var(--f-prose); font-size: 15.5px; color: var(--ink-2); margin-bottom: 7px; }
+.verify li b { font-family: var(--f-data); font-size: 13px; color: var(--ink); }
+
+/* ── Warning block ────────────────────────────────────────────────── */
+.warn { border: 1px solid var(--line); border-left: 3px solid var(--ember); background: var(--surface); border-radius: 2px; padding: 22px 24px; margin-top: 26px; }
+.warn h3 { font-size: 16px; margin-bottom: 10px; color: var(--ember); }
+.warn p { font-family: var(--f-prose); font-size: 16px; color: var(--ink-2); margin-bottom: 12px; }
+pre { font-family: var(--f-data); font-size: 13px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 2px; padding: 12px 14px; overflow-x: auto; margin: 0; color: var(--ink); }
+
+/* ── Stack ────────────────────────────────────────────────────────── */
+.stack { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+.stack span { font-family: var(--f-data); font-size: 12px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 2px; color: var(--ink-2); background: var(--surface); }
+
+footer { border-top: 1px solid var(--line); padding: 32px 0 54px; margin-top: 60px; }
+footer p { font-family: var(--f-data); font-size: 12px; color: var(--ink-3); margin: 0; }
+
+@media (prefers-reduced-motion: reduce) { * { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+</style>
+
+<header>
+  <div class="head-in">
+    <div class="wordmark">collapser<span>·</span></div>
+    <div class="head-meta">
+      <span>Go 1.25</span>
+      <span>gRPC sidecar</span>
+      <span>kind + Istio 1.28</span>
+    </div>
+  </div>
+</header>
+
+<main class="shell">
+
+  <div class="hero">
+    <p class="eyebrow">Thundering-herd protection for gRPC</p>
+    <h1>When a thousand callers ask the <em>same question</em>, answer it once.</h1>
+    <p class="hero-sub">
+      A Go sidecar that collapses identical in-flight gRPC requests into a single
+      backend call. Envoy already load-balances, retries and reports on those
+      requests — but it has no notion that they are the same request. This fills
+      that gap.
+    </p>
+
+    <div class="headline-stat">
+      <b>2,000 → 1</b>
+      <span>concurrent identical requests reached the backend as one call, measured on a live Kubernetes cluster inside the Istio mesh.</span>
+    </div>
+  </div>
+
+  <!-- ── Simulator ────────────────────────────────────────────── -->
+  <div class="panel">
+    <div class="panel-head">
+      <p class="eyebrow">Live mechanism</p>
+      <p class="sim-note">Runs the real decision logic in your browser · not a recording</p>
+    </div>
+
+    <canvas id="stage" aria-label="Animated diagram: concurrent client requests entering the sidecar and collapsing into a single backend call."></canvas>
+
+    <div class="controls">
+      <div class="ctl">
+        <label for="conc">Burst size</label>
+        <input type="range" id="conc" min="10" max="2000" step="10" value="500">
+        <output class="count-out" id="concOut">500</output>
+      </div>
+
+      <div class="ctl">
+        <label for="sw-on">Sidecar</label>
+        <span class="switch" role="group" aria-label="Sidecar mode">
+          <button id="sw-on" aria-pressed="true">Collapsing</button>
+          <button id="sw-off" aria-pressed="false">Bypassed</button>
+        </span>
+      </div>
+
+      <button class="fire" id="fire">Send burst</button>
+    </div>
+
+    <dl class="readout">
+      <div><dt>Client requests</dt><dd class="v-sent" id="rSent">0</dd></div>
+      <div><dt>Backend calls</dt><dd class="v-hit is-good" id="rHit">0</dd></div>
+      <div><dt>Backend load removed</dt><dd class="v-ratio" id="rRatio">—</dd></div>
+    </dl>
+  </div>
+
+  <!-- ── Mechanism ────────────────────────────────────────────── -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Mechanism</p>
+      <h2>Three paths, one backend call</h2>
+    </div>
+
+    <div class="prose">
+      <p>
+        Every request is reduced to a key — the gRPC method, the request payload,
+        and any headers the operator has declared identity-bearing. That key
+        decides which of three things happens, and only one of them touches the
+        backend.
+      </p>
+    </div>
+
+    <div class="paths">
+      <div class="path p1">
+        <h3><b>①</b> Cache hit</h3>
+        <p>A fresh result for this key is already held. Return it. The TTL is short by design — 100&nbsp;ms — because its job is absorbing bursts, not being a cache.</p>
+        <p class="cost">45.7 ns/op · <b>0 allocations</b></p>
+      </div>
+      <div class="path p2">
+        <h3><b>②</b> Join in flight</h3>
+        <p>Someone is already asking. Block on the single channel the leader closes when it has an answer — no per-waiter registration, no polling, nothing to clean up.</p>
+        <p class="cost">waits on the backend · <b>0 allocations</b></p>
+      </div>
+      <div class="path p3">
+        <h3><b>③</b> Lead the call</h3>
+        <p>Nobody has asked yet. Become the leader and call the backend on a context detached from your own, so one client hanging up cannot cancel work others are waiting on.</p>
+        <p class="cost">1,594 ns/op · 10 allocations</p>
+      </div>
+    </div>
+
+    <div class="prose" style="margin-top:30px">
+      <p>
+        The follower path being <strong>allocation-free</strong> is the part worth
+        stating precisely. Followers do not each register a channel to be notified
+        on; they all wait on one channel the leader closes. The close/receive pair
+        is what makes the result safe to read without a lock, and it means the
+        cost of the thousandth caller joining a burst is the same as the second.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── Results ──────────────────────────────────────────────── -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Measured, not estimated</p>
+      <h2>On a real cluster</h2>
+    </div>
+
+    <div class="prose">
+      <p>
+        Deployed to a Kubernetes cluster with Istio 1.28.1, Envoy sidecars injected
+        and STRICT mTLS between workloads. Identical requests fired concurrently at
+        the proxy; backend calls counted <strong>at the backend</strong>.
+      </p>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <caption>Concurrent identical requests → calls that reached the backend</caption>
+        <thead>
+          <tr>
+            <th>Burst</th>
+            <th class="num">Direct to backend</th>
+            <th class="num">Through collapser</th>
+            <th class="num">Load removed</th>
+            <th>Relative backend load</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="num">100</td><td class="num">100 calls</td><td class="num hero-num">1 call</td><td class="num">99.0%</td><td class="bar"><i style="width:11%"></i></td></tr>
+          <tr><td class="num">500</td><td class="num">500 calls</td><td class="num hero-num">1 call</td><td class="num">99.8%</td><td class="bar"><i style="width:38%"></i></td></tr>
+          <tr><td class="num">1,000</td><td class="num">1,000 calls</td><td class="num hero-num">1 call</td><td class="num">99.9%</td><td class="bar"><i style="width:70%"></i></td></tr>
+          <tr><td class="num">2,000</td><td class="num">—</td><td class="num hero-num">1 call</td><td class="num">—</td><td class="bar"><i style="width:100%"></i></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="verify">
+      <h3>The 2,000-request run, confirmed three independent ways</h3>
+      <ol>
+        <li>The backend's own request counter: <b>1</b></li>
+        <li>Envoy's <b>istio_requests_total{reporter="destination"}</b>: <b>1</b></li>
+        <li>The proxy's own metrics: <b>1</b> backend call, 1,999 collapsed</li>
+      </ol>
+    </div>
+
+    <div class="prose" style="margin-top:26px">
+      <p>
+        The middle one matters most. It is the service mesh's own telemetry,
+        reported by the Envoy sidecar in front of the backend — a source with no
+        stake in the result, agreeing that one request arrived.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">In-process, race detector enabled</p>
+      <h2>Under sustained load</h2>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <caption>go test -race · 11th Gen Core i7-1165G7 · Go 1.25.5</caption>
+        <thead><tr><th>Scenario</th><th class="num">Requests</th><th class="num">Backend calls</th><th class="num">Collapse ratio</th><th class="num">Errors</th></tr></thead>
+        <tbody>
+          <tr><td>10,000 concurrent, one key</td><td class="num">10,000</td><td class="num hero-num">2</td><td class="num">5,000:1</td><td class="num zero">0</td></tr>
+          <tr><td>60 s sustained, 100 workers</td><td class="num">391,400</td><td class="num hero-num">392</td><td class="num">998:1</td><td class="num zero">0</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="tablewrap" style="margin-top:16px">
+      <table>
+        <caption>Leak checks and coverage</caption>
+        <tbody>
+          <tr><td>Goroutine growth after 1,000 collapsed calls</td><td class="num zero">0</td></tr>
+          <tr><td>Heap growth across 100,000 requests</td><td class="num zero">0 MB</td></tr>
+          <tr><td>Sustained throughput</td><td class="num">6,523 req/s</td></tr>
+          <tr><td>Test coverage · deduplication engine</td><td class="num">97.5%</td></tr>
+          <tr><td>Test coverage · configuration</td><td class="num">95.8%</td></tr>
+          <tr><td>golangci-lint findings</td><td class="num zero">0</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Safety ───────────────────────────────────────────────── -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Design judgment</p>
+      <h2>The dangerous default</h2>
+    </div>
+
+    <div class="prose">
+      <p>
+        Collapsing is only safe between requests whose responses are
+        interchangeable — and method plus payload does not always establish that.
+        Two callers can send byte-identical requests while authenticated as
+        different users. Collapse those and one tenant is served the other
+        tenant's data.
+      </p>
+    </div>
+
+    <div class="warn">
+      <h3>Naming the headers is the fix</h3>
+      <p>
+        Any header the backend varies its response by is declared, and becomes part
+        of the collapse key. Those requests then get separate backend calls, and
+        the burst protection still applies within each identity.
+      </p>
+      <pre>COLLAPSER_KEY_HEADERS=authorization,x-tenant-id</pre>
+    </div>
+
+    <div class="prose" style="margin-top:26px">
+      <p>
+        Two related defaults fall out of the same reasoning. Backend errors are
+        <strong>not</strong> cached, because one transient failure should not be
+        replayed to every caller for the whole window. And liveness never depends
+        on the backend — restarting the proxy during a backend outage would remove
+        the very collapsing that is protecting it.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Built with</p>
+      <h2>Stack</h2>
+    </div>
+    <div class="prose">
+      <p>
+        Schema-agnostic by design: a passthrough codec forwards raw gRPC frames
+        unchanged, so the proxy needs no generated stubs and works in front of any
+        protobuf service. One persistent client connection is shared across all
+        backend calls, so HTTP/2 multiplexing does its job and there are no
+        per-request handshakes.
+      </p>
+    </div>
+    <div class="stack">
+      <span>Go 1.25</span><span>gRPC</span><span>Protocol Buffers</span>
+      <span>Prometheus</span><span>zap</span><span>Kubernetes</span>
+      <span>Istio 1.28</span><span>Envoy</span><span>kind</span><span>Docker</span>
+    </div>
+  </section>
+
+  <footer>
+    <p>All figures on this page are measured output, reproducible with <code>make check</code>, <code>make bench</code> and <code>make cluster &amp;&amp; make deploy &amp;&amp; make demo</code>.</p>
+  </footer>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  var cv = document.getElementById("stage");
+  var ctx = cv.getContext("2d");
+  var concEl = document.getElementById("conc");
+  var concOut = document.getElementById("concOut");
+  var fireBtn = document.getElementById("fire");
+  var onBtn = document.getElementById("sw-on");
+  var offBtn = document.getElementById("sw-off");
+  var rSent = document.getElementById("rSent");
+  var rHit = document.getElementById("rHit");
+  var rRatio = document.getElementById("rRatio");
+
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var collapsing = true;
+  var W = 0, H = 0;
+
+  function tok(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+  var C = {};
+  function readTokens() {
+    C.ink = tok("--ink"); C.ink2 = tok("--ink-2"); C.ink3 = tok("--ink-3");
+    C.line = tok("--line"); C.lineS = tok("--line-strong");
+    C.amber = tok("--amber"); C.amberB = tok("--amber-bright");
+    C.teal = tok("--teal"); C.ember = tok("--ember");
+    C.surface = tok("--surface"); C.surface2 = tok("--surface-2");
+  }
+
+  function resize() {
+    var dpr = window.devicePixelRatio || 1;
+    var r = cv.getBoundingClientRect();
+    W = r.width; H = r.height;
+    cv.width = Math.round(W * dpr);
+    cv.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    readTokens();
+    draw();
+  }
+
+  // Geometry: clients | sidecar | backend
+  function zones() {
+    return {
+      clientX: Math.max(58, W * 0.10),
+      sideX: W * 0.48,
+      backX: W - Math.max(58, W * 0.10),
+      midY: H / 2
+    };
+  }
+
+  var particles = [];   // {x0,y0,phase,t,speed,mode}
+  var running = false;
+  var held = 0;         // followers parked at the sidecar
+  var sentTotal = 0, hitTotal = 0, burstN = 0;
+  var leaderState = "idle"; // idle | out | back
+  var leaderT = 0;
+  var flashUntil = 0;
+
+  function boxes() {
+    var z = zones();
+    return {
+      side: { x: z.sideX - 46, y: z.midY - 52, w: 92, h: 104 },
+      back: { x: z.backX - 40, y: z.midY - 40, w: 80, h: 80 }
+    };
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function label(text, x, y, color, size, weight) {
+    ctx.fillStyle = color;
+    ctx.font = (weight || 500) + " " + (size || 10) + 'px "JetBrains Mono", monospace';
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, x, y);
+  }
+
+  function draw() {
+    if (!W) return;
+    var z = zones(), b = boxes();
+    ctx.clearRect(0, 0, W, H);
+
+    // rails
+    ctx.strokeStyle = C.line;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 5]);
+    ctx.beginPath();
+    ctx.moveTo(z.clientX + 14, z.midY); ctx.lineTo(b.side.x, z.midY);
+    ctx.moveTo(b.side.x + b.side.w, z.midY); ctx.lineTo(b.back.x, z.midY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // client cluster
+    ctx.fillStyle = C.ink3;
+    for (var i = 0; i < 7; i++) {
+      var yy = z.midY - 54 + i * 18;
+      ctx.globalAlpha = 0.30 + (i === 3 ? 0.5 : 0.12 * (3 - Math.abs(3 - i)));
+      ctx.fillRect(z.clientX - 13, yy - 3, 12, 6);
+    }
+    ctx.globalAlpha = 1;
+    label("CLIENTS", z.clientX - 7, z.midY + 76, C.ink3, 9.5, 600);
+
+    // sidecar box
+    var hot = Date.now() < flashUntil;
+    ctx.fillStyle = C.surface2;
+    roundRect(b.side.x, b.side.y, b.side.w, b.side.h, 3); ctx.fill();
+    ctx.strokeStyle = collapsing ? C.amber : C.lineS;
+    ctx.lineWidth = collapsing ? 1.6 : 1;
+    roundRect(b.side.x, b.side.y, b.side.w, b.side.h, 3); ctx.stroke();
+
+    label("COLLAPSER", b.side.x + b.side.w / 2, b.side.y + 17, collapsing ? C.amber : C.ink3, 9.5, 700);
+    if (collapsing) {
+      label(held > 0 ? String(held) : "—", b.side.x + b.side.w / 2, z.midY + 2, held > 0 ? C.ink : C.ink3, held > 0 ? 25 : 17, 700);
+      label("WAITING", b.side.x + b.side.w / 2, b.side.y + b.side.h - 16, C.ink3, 8.5, 600);
+    } else {
+      label("BYPASS", b.side.x + b.side.w / 2, z.midY + 2, C.ink3, 12, 700);
+    }
+
+    // backend box
+    ctx.fillStyle = hot ? C.ember : C.surface2;
+    roundRect(b.back.x, b.back.y, b.back.w, b.back.h, 3); ctx.fill();
+    ctx.strokeStyle = hot ? C.ember : C.lineS;
+    ctx.lineWidth = 1;
+    roundRect(b.back.x, b.back.y, b.back.w, b.back.h, 3); ctx.stroke();
+    label("BACKEND", b.back.x + b.back.w / 2, z.midY - 9, hot ? "#fff" : C.ink3, 9, 700);
+    label(String(hitTotal), b.back.x + b.back.w / 2, z.midY + 11, hot ? "#fff" : C.ink, 19, 700);
+
+    // particles
+    for (var p = 0; p < particles.length; p++) {
+      var q = particles[p];
+      if (q.done) continue;
+      ctx.globalAlpha = q.alpha;
+      ctx.fillStyle = q.color;
+      ctx.beginPath();
+      ctx.arc(q.x, q.y, 2.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // leader packet
+    if (leaderState === "out" || leaderState === "back") {
+      var from = leaderState === "out" ? b.side.x + b.side.w : b.back.x;
+      var to = leaderState === "out" ? b.back.x : b.side.x + b.side.w;
+      var lx = from + (to - from) * leaderT;
+      ctx.fillStyle = leaderState === "out" ? C.amber : C.teal;
+      ctx.beginPath();
+      ctx.arc(lx, z.midY, 4.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = .28;
+      ctx.beginPath(); ctx.arc(lx, z.midY, 9, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function updateReadout() {
+    rSent.textContent = sentTotal.toLocaleString();
+    rHit.textContent = hitTotal.toLocaleString();
+    rHit.classList.toggle("is-good", collapsing);
+    if (sentTotal > 0) {
+      var pct = (1 - hitTotal / sentTotal) * 100;
+      rRatio.textContent = pct <= 0 ? "0%" : pct.toFixed(1) + "%";
+    } else {
+      rRatio.textContent = "—";
+    }
+  }
+
+  // At large bursts we animate a representative sample; the counters stay exact.
+  function sampleSize(n) { return Math.min(n, 150); }
+
+  function fire() {
+    if (running) return;
+    running = true;
+    fireBtn.disabled = true;
+
+    burstN = parseInt(concEl.value, 10);
+    var shown = sampleSize(burstN);
+    var z = zones(), b = boxes();
+
+    sentTotal += burstN;
+    particles = [];
+    held = 0;
+
+    for (var i = 0; i < shown; i++) {
+      particles.push({
+        x: z.clientX, y: z.midY + (Math.random() - 0.5) * 92,
+        ty: z.midY + (Math.random() - 0.5) * 10,
+        t: 0,
+        delay: (i / shown) * 0.42 + Math.random() * 0.06,
+        speed: 0.85 + Math.random() * 0.4,
+        color: C.ink3, alpha: .85,
+        arrived: false, done: false
+      });
+    }
+
+    if (reduced) {           // no animation: settle straight to the result
+      hitTotal += collapsing ? 1 : burstN;
+      held = 0; particles = [];
+      flashUntil = Date.now() + 400;
+      updateReadout(); draw();
+      running = false; fireBtn.disabled = false;
+      return;
+    }
+
+    leaderState = "idle";
+    var start = performance.now();
+    var launched = false;
+
+    function frame(now) {
+      var el = (now - start) / 1000;
+      var z2 = zones(), b2 = boxes();
+      var gateX = collapsing ? b2.side.x : b2.back.x;
+      var allArrived = true;
+
+      for (var k = 0; k < particles.length; k++) {
+        var q = particles[k];
+        if (q.done) continue;
+        if (el < q.delay) { allArrived = false; continue; }
+
+        var prog = Math.min(1, (el - q.delay) * q.speed * 1.5);
+        q.x = z2.clientX + (gateX - z2.clientX) * prog;
+        q.y = q.y + (q.ty - q.y) * 0.06;
+
+        if (prog >= 1 && !q.arrived) {
+          q.arrived = true;
+          if (collapsing) {
+            held++;
+            q.done = true;
+            if (!launched) { launched = true; leaderState = "out"; leaderT = 0; }
+          } else {
+            hitTotal++;
+            q.done = true;
+            flashUntil = Date.now() + 90;
+          }
+        }
+        if (!q.arrived) allArrived = false;
+      }
+
+      if (collapsing && leaderState === "out") {
+        leaderT += 0.022;
+        if (leaderT >= 1) {
+          leaderT = 0; leaderState = "back";
+          hitTotal += 1;
+          flashUntil = Date.now() + 420;
+        }
+      } else if (collapsing && leaderState === "back") {
+        leaderT += 0.03;
+        if (leaderT >= 1) {
+          leaderT = 0; leaderState = "idle";
+          held = 0;
+        }
+      }
+
+      updateReadout();
+      draw();
+
+      var settled = allArrived && (!collapsing || leaderState === "idle");
+      if (settled && el > 0.6) {
+        // scale the visible sample up to the real burst size
+        if (!collapsing && burstN > particles.length) {
+          hitTotal += (burstN - particles.length);
+        }
+        particles = []; held = 0;
+        updateReadout(); draw();
+        running = false; fireBtn.disabled = false;
+        return;
+      }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function setMode(on) {
+    collapsing = on;
+    onBtn.setAttribute("aria-pressed", String(on));
+    offBtn.setAttribute("aria-pressed", String(!on));
+    sentTotal = 0; hitTotal = 0; held = 0; particles = [];
+    updateReadout(); draw();
+  }
+
+  concEl.addEventListener("input", function () {
+    concOut.textContent = parseInt(concEl.value, 10).toLocaleString();
+  });
+  fireBtn.addEventListener("click", fire);
+  onBtn.addEventListener("click", function () { setMode(true); });
+  offBtn.addEventListener("click", function () { setMode(false); });
+
+  window.addEventListener("resize", resize);
+  if (window.matchMedia) {
+    var mq = window.matchMedia("(prefers-color-scheme: dark)");
+    if (mq.addEventListener) mq.addEventListener("change", function () { readTokens(); draw(); });
+  }
+
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(function () { readTokens(); draw(); });
+  }
+
+  resize();
+  updateReadout();
+})();
+</script>

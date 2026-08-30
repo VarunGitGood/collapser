@@ -1,0 +1,61 @@
+# Measured on 2026-08-30 09:55 UTC
+# 11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz, 8 threads, go version go1.25.5 linux/amd64
+
+== go test -race (full suite incl. 60s soak) ==
+ok  	github.com/VarunGitGood/collapser-grpc/internal/collapser	62.174s
+ok  	github.com/VarunGitGood/collapser-grpc/internal/config	1.011s
+ok  	github.com/VarunGitGood/collapser-grpc/internal/proxy	1.019s
+
+  stress detail:
+  High Concurrency Test:
+    Requests: 10000
+    Backend calls: 2
+    Errors: 0
+    Collapse ratio: 5000.0:1
+    Duration: 68.241829ms
+    Throughput: 146538 req/s
+  Sustained Load Test (60s):
+    Total requests: 391400
+    Backend calls: 392
+    Errors: 0
+    Collapse ratio: 998.5:1
+    RPS: 6523
+  Memory Leak Test:
+    Before: 4 MB
+    After:  4 MB
+    Diff:   0 MB
+  Goroutine Leak Test:
+    Before: 2
+    After:  2
+    Diff:   0
+
+== go test -bench=. -benchmem ==
+goos: linux
+goarch: amd64
+cpu: 11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz
+BenchmarkCollapser_CacheHitPath-8   	81933667	        45.67 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCollapser_CollapsePath-8   	   13425	    267940 ns/op	         8.005 collapsed/backend-call	      54 B/op	       0 allocs/op
+BenchmarkCollapser_LeaderPath-8     	 2265313	      1594 ns/op	     552 B/op	      10 allocs/op
+BenchmarkBackend_Direct-8           	1000000000	         0.3324 ns/op	       0 B/op	       0 allocs/op
+ok  	github.com/VarunGitGood/collapser-grpc/internal/collapser	15.691s
+
+== coverage ==
+ok  	internal/collapser	(cached)	coverage: 97.5% of statements
+ok  	internal/config	(cached)	coverage: 95.8% of statements
+	internal/logger		coverage: 0.0% of statements
+ok  	internal/proxy	(cached)	coverage: 33.7% of statements
+
+== on-cluster (kind + Istio 1.28.1, sidecar-injected, STRICT mTLS) ==
+Identical concurrent requests through the deployed proxy.
+Backend calls counted at the backend, and cross-checked against Envoy's
+istio_requests_total{reporter="destination"} — not the proxy's own accounting.
+
+  concurrency   direct(no proxy)   via collapser   backend-call reduction
+          100          100 calls         1 call                    99.0%
+          500          500 calls         1 call                    99.8%
+         1000         1000 calls         1 call                    99.9%
+         2000                  -         1 call     (108ms wall, 50ms backend)
+
+Envoy cross-check for the 2000-request run:
+  backend own counter                             : 1
+  istio_requests_total{reporter="destination"}    : 1

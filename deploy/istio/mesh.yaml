@@ -1,0 +1,68 @@
+# Istio config for the collapser demo.
+#
+# The point of the sidecar living inside the mesh: Envoy already load-balances,
+# retries and reports per-RPC telemetry, but it has no notion of two identical
+# in-flight requests being the same request. The collapser adds exactly that,
+# and Istio's telemetry is what makes the effect visible.
+
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: hello-backend
+spec:
+  hosts: ["hello-backend"]
+  http:
+    - match:
+        - port: 50051
+      route:
+        - destination:
+            host: hello-backend
+            port: {number: 50051}
+      # Retries multiply load on an already-struggling backend, which is exactly
+      # the thundering herd the collapser exists to absorb. Kept low on purpose.
+      retries:
+        attempts: 2
+        perTryTimeout: 2s
+        retryOn: unavailable,deadline-exceeded
+      timeout: 10s
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: hello-backend
+spec:
+  host: hello-backend
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        # A deliberately small ceiling: without collapsing, a burst of identical
+        # requests saturates this and callers start queueing or failing.
+        http2MaxRequests: 50
+        maxRequestsPerConnection: 0
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 10s
+      baseEjectionTime: 30s
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: collapser-proxy
+spec:
+  host: collapser-proxy
+  trafficPolicy:
+    connectionPool:
+      tcp: {maxConnections: 200}
+      http: {http2MaxRequests: 1000}
+---
+# mTLS between every workload in the namespace, terminated by the Envoy sidecars.
+# The collapser itself speaks plaintext and stays unaware of it.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+spec:
+  mtls:
+    mode: STRICT

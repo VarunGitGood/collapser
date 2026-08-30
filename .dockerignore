@@ -1,0 +1,6 @@
+.git
+bin/
+deploy/evidence/
+*.md
+*.prof
+*.out

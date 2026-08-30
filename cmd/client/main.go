@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -12,15 +14,25 @@ import (
 )
 
 func main() {
-	conn, err := grpc.NewClient("localhost:50052", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	target := "localhost:50052"
+	if v := os.Getenv("PROXY_ADDRESS"); v != "" {
+		target = v
+	}
+	numRequests := 100
+	if v := os.Getenv("CONCURRENCY"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			numRequests = n
+		}
+	}
+
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	c := hello.NewHelloServiceClient(conn)
 
 	var wg sync.WaitGroup
-	numRequests := 100
 	wg.Add(numRequests)
 
 	start := time.Now()
