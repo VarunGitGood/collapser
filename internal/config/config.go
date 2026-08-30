@@ -25,6 +25,13 @@ type Config struct {
 	// Disabled by default: a single transient error should not block all callers
 	// for the full ResultCacheDuration.
 	CacheErrors bool `envconfig:"COLLAPSER_CACHE_ERRORS" default:"false"`
+	// MaxCacheEntries caps the result cache. Zero means unlimited.
+	MaxCacheEntries int `envconfig:"COLLAPSER_MAX_CACHE_ENTRIES" default:"10000"`
+	// KeyHeaders lists incoming metadata headers folded into the collapse key, so
+	// requests differing only in those headers are never collapsed together.
+	// Set this to any header the backend varies its response by (e.g. authorization,
+	// x-tenant-id) or collapsing can serve one caller's response to another.
+	KeyHeaders []string `envconfig:"COLLAPSER_KEY_HEADERS"`
 
 	// Logging
 	LogLevel  string `envconfig:"LOG_LEVEL" default:"info"`
@@ -66,6 +73,9 @@ func (c *Config) Validate() error {
 	}
 	if c.CleanupInterval <= 0 {
 		return fmt.Errorf("COLLAPSER_CLEANUP_INTERVAL must be positive")
+	}
+	if c.MaxCacheEntries < 0 {
+		return fmt.Errorf("COLLAPSER_MAX_CACHE_ENTRIES must be non-negative")
 	}
 	return nil
 }

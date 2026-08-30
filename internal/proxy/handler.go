@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
+	"strings"
 
 	"github.com/VarunGitGood/collapser-grpc/internal/collapser"
 	"google.golang.org/grpc"
@@ -16,12 +18,24 @@ import (
 type Handler struct {
 	conn      *grpc.ClientConn
 	collapser *collapser.Collapser
+
+	// keyHeaders are incoming metadata keys folded into the collapse key.
+	// Requests that differ only in these headers are never collapsed together.
+	// See the note on generateKey for why this matters.
+	keyHeaders []string
 }
 
-func NewHandler(c *collapser.Collapser, conn *grpc.ClientConn) *Handler {
+func NewHandler(c *collapser.Collapser, conn *grpc.ClientConn, keyHeaders []string) *Handler {
+	normalized := make([]string, 0, len(keyHeaders))
+	for _, h := range keyHeaders {
+		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
+			normalized = append(normalized, h)
+		}
+	}
 	return &Handler{
-		conn:      conn,
-		collapser: c,
+		conn:       conn,
+		collapser:  c,
+		keyHeaders: normalized,
 	}
 }
 
@@ -40,7 +54,7 @@ func (h *Handler) Handle(srv interface{}, stream grpc.ServerStream) error {
 
 	first := &RawMessage{}
 	if err := stream.RecvMsg(first); err != nil {
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return status.Errorf(codes.InvalidArgument, "empty request")
 		}
 		return err
@@ -51,11 +65,11 @@ func (h *Handler) Handle(srv interface{}, stream grpc.ServerStream) error {
 	// message, so the second RecvMsg returns io.EOF immediately.
 	second := &RawMessage{}
 	recvErr := stream.RecvMsg(second)
-	if recvErr != nil && recvErr != io.EOF {
+	if recvErr != nil && !errors.Is(recvErr, io.EOF) {
 		return recvErr
 	}
 
-	if recvErr == io.EOF {
+	if errors.Is(recvErr, io.EOF) {
 		// Unary (or server-streaming with a single request): apply the collapser.
 		return h.handleUnary(stream, method, first)
 	}
@@ -65,10 +79,17 @@ func (h *Handler) Handle(srv interface{}, stream grpc.ServerStream) error {
 }
 
 func (h *Handler) handleUnary(stream grpc.ServerStream, method string, in *RawMessage) error {
-	key := h.generateKey(method, in.Data)
+	md, _ := metadata.FromIncomingContext(stream.Context())
+	key := h.generateKey(method, in.Data, md)
+
 	resp, err := h.collapser.Execute(stream.Context(), key, func(ctx context.Context) ([]byte, error) {
+		// The backend call runs on a detached context, so the incoming metadata
+		// has to be re-attached explicitly or headers (auth, tracing) would be
+		// dropped. The leader's metadata is what every follower's request is
+		// served with — see generateKey.
 		var out RawMessage
-		if err := h.conn.Invoke(ctx, method, in, &out, grpc.ForceCodec(passthroughCodec{})); err != nil {
+		if err := h.conn.Invoke(metadata.NewOutgoingContext(ctx, md), method, in, &out,
+			grpc.ForceCodec(passthroughCodec{})); err != nil {
 			return nil, err
 		}
 		return out.Data, nil
@@ -105,7 +126,7 @@ func (h *Handler) handleStreaming(stream grpc.ServerStream, method string, buffe
 		for {
 			msg := &RawMessage{}
 			if err := stream.RecvMsg(msg); err != nil {
-				if err == io.EOF {
+				if errors.Is(err, io.EOF) {
 					clientErrCh <- backendStream.CloseSend()
 				} else {
 					clientErrCh <- err
@@ -123,7 +144,7 @@ func (h *Handler) handleStreaming(stream grpc.ServerStream, method string, buffe
 	for {
 		msg := &RawMessage{}
 		if err := backendStream.RecvMsg(msg); err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return <-clientErrCh
 			}
 			return err
@@ -134,9 +155,26 @@ func (h *Handler) handleStreaming(stream grpc.ServerStream, method string, buffe
 	}
 }
 
-func (h *Handler) generateKey(method string, data []byte) string {
-	hash := sha256.Sum256(data)
-	return method + ":" + hex.EncodeToString(hash[:])
+// generateKey derives the collapse key from the method, the request payload and
+// any configured key headers.
+//
+// Collapsing is only safe between requests whose responses are interchangeable.
+// Method plus payload is not always enough: if the backend varies its response
+// by an identity header, collapsing across two tenants would serve one tenant's
+// data to the other. Listing those headers in COLLAPSER_KEY_HEADERS puts them in
+// the key, so such requests get separate backend calls.
+func (h *Handler) generateKey(method string, data []byte, md metadata.MD) string {
+	hash := sha256.New()
+	hash.Write(data)
+	for _, name := range h.keyHeaders {
+		hash.Write([]byte{0})
+		hash.Write([]byte(name))
+		for _, v := range md.Get(name) {
+			hash.Write([]byte{0})
+			hash.Write([]byte(v))
+		}
+	}
+	return method + ":" + hex.EncodeToString(hash.Sum(nil))
 }
 
 type RawMessage struct {

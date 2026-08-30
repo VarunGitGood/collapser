@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -46,27 +47,40 @@ func main() {
 	if err != nil {
 		logger.Fatal("failed to create backend connection", zap.Error(err))
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	collapserCfg := collapser.Config{
 		ResultCacheDuration: cfg.ResultCacheDuration,
 		BackendTimeout:      cfg.BackendTimeout,
 		CleanupInterval:     cfg.CleanupInterval,
 		CacheErrors:         cfg.CacheErrors,
+		MaxCacheEntries:     cfg.MaxCacheEntries,
 	}
 	c := collapser.NewCollapser(collapserCfg)
 	if err := c.Start(); err != nil {
 		logger.Fatal("failed to start collapser", zap.Error(err))
 	}
 
-	proxyHandler := proxy.NewHandler(c, conn)
+	proxyHandler := proxy.NewHandler(c, conn, cfg.KeyHeaders)
 
 	// Metrics + health server.
 	go func() {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.Handler())
+		// Liveness: the process is up. Restarting on backend trouble would only
+		// make an outage worse, so this never depends on the backend.
 		mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
+		})
+		// Readiness: only take traffic once the backend channel is usable, so a
+		// rolling deploy does not route into a proxy that cannot reach anything.
+		mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
+			switch conn.GetState() {
+			case connectivity.Ready, connectivity.Idle:
+				w.WriteHeader(http.StatusOK)
+			default:
+				http.Error(w, "backend not ready", http.StatusServiceUnavailable)
+			}
 		})
 		logger.Info("Metrics server starting", zap.Int("port", cfg.MetricsPort))
 		if err := http.ListenAndServe(":"+strconv.Itoa(cfg.MetricsPort), mux); err != nil {
@@ -94,5 +108,5 @@ func main() {
 	<-sigCh
 	logger.Info("Shutting down gracefully...")
 	srv.GracefulStop() // drain in-flight gRPC calls before closing
-	c.Stop()           // notify any waiting followers
+	_ = c.Stop()       // stop the cache cleanup loop
 }
