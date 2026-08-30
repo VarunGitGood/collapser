@@ -1,4 +1,5 @@
-.PHONY: help build test clean run lint proto stress bench docker k8s
+.PHONY: help build test clean run lint proto stress bench docker docker-backend \
+        cluster cluster-down deploy demo undeploy fmt vet check race deps
 
 # Variables
 BINARY_NAME=collapser
@@ -9,8 +10,11 @@ CLIENT_PATH=./cmd/client/main.go
 
 # Docker variables
 DOCKER_IMAGE=collapser-proxy
+BACKEND_IMAGE=collapser-backend
 DOCKER_TAG=latest
-REGISTRY=your-registry
+
+# Cluster variables
+KIND_CLUSTER=collapser
 
 # Default target
 help: ## Display this help screen
@@ -28,6 +32,18 @@ build: ## Build the proxy binary
 run: build ## Build and run the proxy
 	@echo "Running $(BINARY_NAME)..."
 	@$(BUILD_DIR)/$(BINARY_NAME)
+
+# ============================================================================
+# Codegen
+# ============================================================================
+
+proto: ## Regenerate protobuf stubs (requires protoc, protoc-gen-go, protoc-gen-go-grpc)
+	@echo "Generating protobuf stubs..."
+	@protoc \
+		--go_out=. --go_opt=module=github.com/VarunGitGood/collapser-grpc \
+		--go-grpc_out=. --go-grpc_opt=module=github.com/VarunGitGood/collapser-grpc \
+		proto/hello.proto
+	@echo "Generated stubs are committed, so a fresh clone builds without protoc."
 
 # ============================================================================
 # Test Targets
@@ -110,5 +126,34 @@ deps-upgrade: ## Upgrade dependencies
 deps-vendor: ## Vendor dependencies
 	@echo "Vendoring dependencies..."
 	@go mod vendor
+
+# ============================================================================
+# Container & Cluster Targets
+# ============================================================================
+
+docker: ## Build the proxy and demo backend images
+	@docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) --target proxy .
+	@docker build -t $(BACKEND_IMAGE):$(DOCKER_TAG) --target backend .
+
+cluster: ## Create a local kind cluster with Istio installed
+	@./deploy/scripts/cluster-up.sh
+
+deploy: docker ## Load images into kind and apply the k8s + Istio manifests
+	@kind load docker-image $(DOCKER_IMAGE):$(DOCKER_TAG) --name $(KIND_CLUSTER)
+	@kind load docker-image $(BACKEND_IMAGE):$(DOCKER_TAG) --name $(KIND_CLUSTER)
+	@kubectl apply -f deploy/k8s/
+	@kubectl apply -f deploy/istio/
+	@kubectl rollout status deploy/collapser-proxy --timeout=180s
+	@kubectl rollout status deploy/hello-backend --timeout=180s
+
+demo: ## Drive load through the deployed proxy and print the collapse ratio
+	@./deploy/scripts/demo.sh
+
+undeploy: ## Remove the workloads, keep the cluster
+	@kubectl delete -f deploy/istio/ --ignore-not-found
+	@kubectl delete -f deploy/k8s/ --ignore-not-found
+
+cluster-down: ## Delete the local kind cluster
+	@kind delete cluster --name $(KIND_CLUSTER)
 
 .DEFAULT_GOAL := help

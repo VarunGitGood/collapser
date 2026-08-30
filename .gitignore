@@ -32,9 +32,8 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Generated files
-*.pb.go
-*.pb.gw.go
+# Generated protobuf stubs are committed so `go build ./...` works on a fresh
+# clone without protoc installed. Regenerate with `make proto`.
 
 # Claude Code
 CLAUDE.md
