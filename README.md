@@ -1,16 +1,18 @@
 # Collapser — a gRPC request-collapsing sidecar
 
-A Go sidecar that sits between clients and a backend gRPC service and collapses
-identical in-flight requests into a single backend call.
+Collapser is a Go gRPC sidecar that sits next to a backend service and collapses
+identical in-flight requests into one upstream call. It is a systems-design
+learning project built around one question: how do you stop a burst of duplicate
+reads from becoming a thundering herd at the backend?
 
-When N callers ask the same question at the same time, the backend should answer
-it once. Envoy — which the sidecar runs alongside — load-balances, retries and
-reports on those N requests, but it has no notion that they are the same request.
-This fills that gap.
+In the Kubernetes demo, the backend pod has two containers: Collapser listens on
+port `50052`, then sends the one surviving request to the backend on
+`localhost:50051`. Docker builds the containers and kind runs the local
+Kubernetes cluster. No additional infrastructure is required.
 
-**Measured on a local Kubernetes cluster with Istio: 2,000 concurrent identical
-requests reached the backend as 1 call.** Verified three ways — the backend's own
-counter, Envoy's `istio_requests_total`, and the proxy's metrics.
+Run `make cluster && make deploy && make demo` to send a burst through the
+current sidecar deployment. The backend owns the call counter, so the result is
+measured at the destination rather than reported only by Collapser.
 
 ---
 
@@ -18,16 +20,17 @@ counter, Envoy's `istio_requests_total`, and the proxy's metrics.
 
 ```
                     ┌──────────────────────────────────────────┐
-   client ────┐     │  collapser sidecar                       │
+   client ────┐     │  backend pod                             │
    client ────┼────▶│                                          │
-   client ────┤     │   key = SHA256(method ‖ payload ‖ hdrs)   │
+   client ────┤     │  collapser sidecar                       │
    client ────┘     │                                          │
-        (N)         │   ① cached result, still fresh?  ──▶ return
+        (N)         │   key = SHA256(method ‖ payload ‖ hdrs)   │
+                    │   ① cached result, still fresh?  ──▶ return
                     │   ② same key already in flight?  ──▶ wait on it
-                    │   ③ otherwise: become leader     ──▶ call backend ──┐
-                    │                                          │          │
-                    │   leader publishes once, every           │          ▼
-                    │   waiter wakes on the same result ◀──────┼──── backend
+                    │   ③ otherwise: become leader     ──▶ localhost:50051 ┐
+                    │                                          │             │
+                    │   leader publishes once, every           │             ▼
+                    │   waiter wakes on the same result ◀──────┼──── demo backend
                     └──────────────────────────────────────────┘        (1)
 ```
 
@@ -60,19 +63,6 @@ that part is the same idea. What it does not do, and what a sidecar needs:
 Full raw output, with hardware and toolchain, is in
 [`deploy/evidence/results.txt`](deploy/evidence/results.txt). Reproduce it with
 `make check`, `make bench`, and `make cluster && make deploy && make demo`.
-
-### On the cluster (kind + Istio 1.28.1, sidecar-injected, STRICT mTLS)
-
-Backend calls are counted **at the backend**, then cross-checked against Envoy's
-`istio_requests_total{reporter="destination"}` — never taken from the proxy's own
-accounting.
-
-| Concurrent identical requests | Direct to backend | Through collapser | Backend load removed |
-|---:|---:|---:|---:|
-| 100 | 100 calls | **1 call** | 99.0% |
-| 500 | 500 calls | **1 call** | 99.8% |
-| 1,000 | 1,000 calls | **1 call** | 99.9% |
-| 2,000 | — | **1 call** | 108 ms wall, 50 ms backend |
 
 ### In-process stress (race detector enabled)
 
@@ -127,17 +117,47 @@ curl -s localhost:8080/calls    # backend calls that actually happened
 curl -s localhost:2112/metrics | grep collapser_
 ```
 
-### On a local Kubernetes cluster with Istio
+### Local Kubernetes lab: Docker and kind
 
-`kind` runs a full cluster inside Docker — nothing cloud, nothing paid.
-Needs `docker`, `kind`, `kubectl`, and `istioctl` on `PATH`.
+`kind` runs Kubernetes nodes as Docker containers—nothing cloud, nothing paid.
+Docker builds the Collapser and backend images; `kind load
+docker-image` puts those local images in the cluster nodes, so there is no
+registry to configure. The Collapser and backend images run together in one pod,
+which is the sidecar pattern this project demonstrates. Needs `docker`, `kind`,
+and `kubectl` on `PATH`.
 
 ```bash
-make cluster    # kind cluster + Istio (demo profile) + sidecar injection
-make deploy     # build images, side-load into kind, apply k8s + Istio manifests
+make cluster    # create a local Kubernetes cluster inside Docker
+make deploy     # Docker build, kind image load, deploy the app + Prometheus + Grafana
 make demo       # drive load, report the collapse ratio measured at the backend
 make cluster-down
 ```
+
+### Grafana dashboard
+
+`make deploy` also starts a small, disposable Prometheus + Grafana stack in the
+`observability` namespace. Prometheus scrapes the proxy Service every five
+seconds; Grafana has the Prometheus data source and the **Collapser / Request
+collapsing** dashboard provisioned automatically.
+
+In a second terminal, run this before or after `make demo`:
+
+```bash
+make grafana
+```
+
+Open <http://localhost:3000/d/collapser/collapser-request-collapsing>. It is a local-only viewer session with
+anonymous access enabled, so no login is required. Run `make demo`, wait about
+10 seconds for two Prometheus scrapes, then refresh the dashboard. The top row
+shows requests, backend calls, collapsed requests, cache hits, backend load
+removed, and p95 latency; the lower panels show the same values over time.
+
+For scrape troubleshooting, open Prometheus with `make prometheus`, then visit
+<http://localhost:9090/targets>. The `collapser` target should be **UP**.
+
+The observability manifests are deliberately small and have no persistent
+storage: deleting the kind cluster deletes their collected data. They are a
+local lab setup, not a production monitoring deployment.
 
 ---
 
@@ -147,7 +167,7 @@ All configuration is via environment variables.
 
 | Variable | Description | Default |
 |---|---|---|
-| `GRPC_PORT` | Proxy listening port | `50052` |
+| `GRPC_PORT` | Sidecar listening port | `50052` |
 | `METRICS_PORT` | Prometheus, health and readiness port | `2112` |
 | `BACKEND_ADDRESS` | Backend gRPC address (`host:port`) | **required** |
 | `BACKEND_TIMEOUT` | Per-call timeout for backend calls | `10s` |
@@ -241,8 +261,7 @@ between cleanup ticks, so entries are capped and the cap is configurable.
   bidi-streaming *are* detected and forwarded correctly, and bypass collapsing
   entirely (streams cannot be meaningfully deduplicated).
 - **TLS.** `BACKEND_USE_TLS=true` uses the system trust store. Custom CA bundles
-  and mTLS to the backend are not implemented — inside a mesh, Istio's sidecars
-  handle that instead.
+  and mTLS to the backend are not implemented.
 - **Single-process cache.** Each replica collapses independently, so N replicas
   can produce up to N backend calls for the same key. Sharing state across
   replicas would trade the latency this exists to save.
@@ -254,13 +273,12 @@ between cleanup ticks, so entries are capped and the cap is configurable.
 ## Layout
 
 ```
-cmd/proxy      the sidecar
+cmd/proxy      the Collapser sidecar
 cmd/backend    demo backend; reports its own call count for measurement
-cmd/client     concurrent load generator (CONCURRENCY, PROXY_ADDRESS)
+cmd/client     concurrent demo client (CONCURRENCY, PROXY_ADDRESS)
 internal/collapser   deduplication engine, TTL cache, metrics
 internal/proxy       gRPC handler, passthrough codec, key derivation
-deploy/k8s           Deployment + Service for both workloads
-deploy/istio         VirtualService, DestinationRule, PeerAuthentication
+deploy/k8s           Sidecar Deployment + Services
 deploy/scripts       cluster-up.sh, demo.sh
 deploy/evidence      raw measurement output
 ```

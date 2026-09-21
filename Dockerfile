@@ -15,9 +15,7 @@ ARG TARGETARCH=amd64
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w" -o /out/proxy ./cmd/proxy && \
     CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w" -o /out/backend ./cmd/backend && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w" -o /out/client ./cmd/client
+    go build -trimpath -ldflags="-s -w" -o /out/backend ./cmd/backend
 
 FROM scratch AS proxy
 COPY --from=build /out/proxy /proxy
@@ -30,10 +28,3 @@ COPY --from=build /out/backend /backend
 EXPOSE 50051
 USER 65532:65532
 ENTRYPOINT ["/backend"]
-
-# The load generator runs inside the mesh, so Envoy reports both hops
-# (client to proxy, proxy to backend) instead of only the second.
-FROM scratch AS loadgen
-COPY --from=build /out/client /client
-USER 65532:65532
-ENTRYPOINT ["/client"]

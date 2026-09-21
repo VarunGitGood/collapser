@@ -44,18 +44,3 @@ ok  	internal/collapser	(cached)	coverage: 97.5% of statements
 ok  	internal/config	(cached)	coverage: 95.8% of statements
 	internal/logger		coverage: 0.0% of statements
 ok  	internal/proxy	(cached)	coverage: 33.7% of statements
-
-== on-cluster (kind + Istio 1.28.1, sidecar-injected, STRICT mTLS) ==
-Identical concurrent requests through the deployed proxy.
-Backend calls counted at the backend, and cross-checked against Envoy's
-istio_requests_total{reporter="destination"} — not the proxy's own accounting.
-
-  concurrency   direct(no proxy)   via collapser   backend-call reduction
-          100          100 calls         1 call                    99.0%
-          500          500 calls         1 call                    99.8%
-         1000         1000 calls         1 call                    99.9%
-         2000                  -         1 call     (108ms wall, 50ms backend)
-
-Envoy cross-check for the 2000-request run:
-  backend own counter                             : 1
-  istio_requests_total{reporter="destination"}    : 1

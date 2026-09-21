@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>collapser</title>
-<meta name="description" content="A gRPC sidecar that collapses duplicate in-flight requests. Benchmarks and cluster measurements from a learning project.">
+<title>collapser · systems-design lab</title>
+<meta name="description" content="A systems-design learning project: a Go gRPC deduplication sidecar, built with Docker and run locally on kind.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -103,14 +103,6 @@ tbody tr:last-child td { border-bottom: 0; }
 
 .note { font-size: 13px; color: var(--fg-dim); max-width: 38em; margin: 14px 0 0; }
 
-/* ── figures ───────────────────────────────────────────── */
-figure { margin: 26px 0 0; }
-figure img {
-  display: block; width: 100%; height: auto;
-  border: 1px solid var(--border); border-radius: 6px; background: #0d0d0d;
-}
-figcaption { font-size: 12.5px; color: var(--fg-dim); margin-top: 10px; max-width: 38em; }
-
 /* ── callout list ──────────────────────────────────────── */
 .found { margin: 0; padding: 0; list-style: none; }
 .found li { padding: 16px 0; border-bottom: 1px solid var(--border); }
@@ -121,6 +113,20 @@ figcaption { font-size: 12.5px; color: var(--fg-dim); margin-top: 10px; max-widt
 ul.plain { margin: 0; padding-left: 18px; }
 ul.plain li { color: var(--fg-mid); margin-bottom: 9px; max-width: 36em; }
 
+/* ── architecture ─────────────────────────────────────── */
+.flow { display: grid; gap: 8px; margin: 22px 0 18px; }
+.node { border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; background: var(--bg-sub); }
+.node b { display: block; color: var(--fg); font-size: 14px; margin-bottom: 2px; }
+.node span { color: var(--fg-mid); font-size: 13px; }
+.arrow { color: var(--fg-dim); font: 15px/1 var(--mono); padding-left: 16px; }
+.command { margin: 18px 0 0; padding: 14px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-sub); overflow-x: auto; }
+.command code { border: 0; background: transparent; padding: 0; white-space: pre; line-height: 1.8; }
+
+/* ── captures ─────────────────────────────────────────── */
+figure { margin: 22px 0 0; }
+figure img { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 6px; background: #0d0d0d; }
+figcaption { font-size: 12.5px; color: var(--fg-dim); margin-top: 10px; max-width: 48em; }
+
 footer { padding: 40px 0 80px; border-top: 1px solid var(--border); }
 footer p { font-family: var(--mono); font-size: 12px; color: var(--fg-dim); margin: 0; }
 </style>
@@ -129,12 +135,12 @@ footer p { font-family: var(--mono); font-size: 12px; color: var(--fg-dim); marg
 <div class="wrap">
 
   <div class="top">
-    <h1>collapser</h1>
+    <h1>collapser / systems-design lab</h1>
     <p class="lede">A gRPC sidecar that collapses duplicate in-flight requests into one backend call.</p>
     <p class="sub">
-      I wrote this to learn how sidecars, Kubernetes and Istio actually behave rather
-      than reading about them. This page is what I measured, including the parts I
-      got wrong on the first pass.
+      I built this to learn how request deduplication, Docker and Kubernetes
+      behave together—not just how they are supposed to work on a diagram. This page
+      records the design, the local infrastructure, the measurements and the mistakes.
     </p>
     <div class="links">
       <a href="https://github.com/VarunGitGood/collapser">Source</a>
@@ -143,10 +149,34 @@ footer p { font-family: var(--mono); font-size: 12px; color: var(--fg-dim); marg
   </div>
 
   <section>
+    <h2>System at a glance</h2>
+    <p>
+      The problem is a small version of the thundering-herd problem: a burst of
+      identical reads can overwhelm a backend even though one answer would satisfy
+      every caller. Collapser is the deduplication layer between those callers and
+      the backend.
+    </p>
+    <div class="flow" aria-label="Request flow from clients through collapser to the backend">
+      <div class="node"><b>Clients / demo client</b><span>Many identical gRPC requests arrive together.</span></div>
+      <div class="arrow" aria-hidden="true">↓ N requests</div>
+      <div class="node"><b>Collapser sidecar</b><span>Runs beside the backend; keys requests by method, payload and selected headers, then shares one leader result with followers.</span></div>
+      <div class="arrow" aria-hidden="true">↓ 1 local gRPC call</div>
+      <div class="node"><b>Hello backend</b><span>Its neighbor in the same pod—a deliberately slow service that counts every request it receives.</span></div>
+    </div>
+    <p class="note">
+      In Kubernetes, Collapser is a real application sidecar: it runs in the same
+      pod as the backend, receives gRPC requests on port <code>50052</code>, and
+      calls the backend on <code>localhost:50051</code>. The application path needs
+      no external service; Prometheus and Grafana are optional local observability
+      containers deployed alongside it.
+    </p>
+  </section>
+
+  <section>
     <h2>What it does</h2>
     <p>
       When several callers ask a service the same question at the same time, the
-      service answers it once per caller. The sidecar sits in front and gives them
+      service answers it once per caller. The proxy sits in front and gives them
       all the same answer from a single backend call.
     </p>
     <p>
@@ -155,9 +185,41 @@ footer p { font-family: var(--mono); font-size: 12px; color: var(--fg-dim); marg
       A short result cache (100&nbsp;ms) covers the gap just after a call finishes.
     </p>
     <p>
-      Envoy already does load balancing, retries and telemetry for this traffic, but
-      it has no concept of two requests being the <em>same</em> request. That gap is
-      the whole reason this exists.
+      A normal gRPC service does not know that two independently arriving requests
+      are the <em>same</em> request. That is the gap this sidecar fills.
+    </p>
+  </section>
+
+  <section>
+    <h2>Local infrastructure: Docker → kind</h2>
+    <p>
+      This is a reproducible local lab, not a cloud deployment. <strong>kind</strong>
+      creates Kubernetes nodes as Docker containers, so Docker is both the image
+      builder and the machine that runs the cluster. No image registry is needed.
+    </p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Step</th><th>What happens</th><th>Why it matters</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="key">1. Build</td><td>Multi-stage Dockerfile produces the Collapser sidecar and backend images.</td><td>Same artifacts locally and in Kubernetes.</td></tr>
+          <tr><td class="key">2. Create cluster</td><td>kind creates a local Kubernetes cluster inside Docker.</td><td>Real pods, Services and container networking on one machine.</td></tr>
+          <tr><td class="key">3. Load + deploy</td><td><code>kind load docker-image</code> copies local images into the nodes, then manifests create the workloads.</td><td>Fast iteration without publishing images.</td></tr>
+          <tr><td class="key">4. Measure</td><td>The included Go client sends identical requests; the backend counter verifies the result.</td><td>The collapse ratio is observed at the destination.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="command" aria-label="Commands to run the local lab"><code># prerequisites: Docker, kind and kubectl on PATH
+make cluster       # local Kubernetes cluster running in Docker
+make deploy        # docker build → kind load → app + Prometheus + Grafana
+make demo          # burst traffic and print backend calls
+make grafana       # open the provisioned dashboard on localhost:3000
+make cluster-down  # remove the local cluster</code></div>
+    <p class="note">
+      In the Dockerfile, each target starts from <code>scratch</code> and runs as a
+      non-root user. In the Kubernetes manifests, the images use
+      <code>imagePullPolicy: Never</code> because kind already has the locally loaded image.
     </p>
   </section>
 
@@ -176,7 +238,7 @@ footer p { font-family: var(--mono); font-size: 12px; color: var(--fg-dim); marg
           <tr><td class="key">Cache hit</td><td class="n">45.7 ns</td><td class="n">0 B</td><td class="n">0</td></tr>
           <tr><td class="key">Joining an in-flight call</td><td class="n">backend-bound</td><td class="n">54 B</td><td class="n">0</td></tr>
           <tr><td class="key">Leading a call</td><td class="n">1,594 ns</td><td class="n">552 B</td><td class="n">10</td></tr>
-          <tr><td class="key">No sidecar (baseline)</td><td class="n">0.33 ns</td><td class="n">0 B</td><td class="n">0</td></tr>
+          <tr><td class="key">No Collapser (baseline)</td><td class="n">0.33 ns</td><td class="n">0 B</td><td class="n">0</td></tr>
         </tbody>
       </table>
     </div>
@@ -205,61 +267,36 @@ footer p { font-family: var(--mono); font-size: 12px; color: var(--fg-dim); marg
   </section>
 
   <section>
-    <h2>On a cluster</h2>
+    <h2>Run the Kubernetes demo</h2>
     <p>
-      Deployed to a local Kubernetes cluster (kind) with Istio 1.28.1, Envoy sidecars
-      injected and mTLS set to STRICT. Backend calls counted by the backend itself,
-      not by the sidecar reporting on its own work.
+      The local demo sends a burst through the Collapser Service into the sidecar
+      container. It then prints the backend's own call count and the collapse ratio.
+      That keeps the measurement honest: the sidecar cannot claim more load
+      reduction than the backend actually sees.
     </p>
-    <div class="scroll">
-      <table>
-        <thead>
-          <tr><th>Concurrent requests</th><th class="n">Straight to backend</th><th class="n">Through sidecar</th></tr>
-        </thead>
-        <tbody>
-          <tr><td class="key">100</td><td class="n">100 calls</td><td class="n">1 call</td></tr>
-          <tr><td class="key">500</td><td class="n">500 calls</td><td class="n">1 call</td></tr>
-          <tr><td class="key">1,000</td><td class="n">1,000 calls</td><td class="n">1 call</td></tr>
-          <tr><td class="key">2,000</td><td class="n">&mdash;</td><td class="n">1 call</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="note">
-      For the 2,000 run I checked three sources that don't depend on each other: the
-      backend's own counter said 1, Envoy's
-      <code>istio_requests_total</code> said 1, and the sidecar's metrics said 1.
-    </p>
+    <div class="command"><code>make cluster && make deploy && make demo</code></div>
   </section>
 
   <section>
-    <h2>What Istio saw</h2>
+    <h2>What Grafana sees</h2>
     <p>
-      A load generator running inside the mesh, sending 600 concurrent requests
-      spread over 25 distinct payloads every 250&nbsp;ms. Both hops are reported by
-      Envoy, so these are the mesh's numbers rather than mine.
+      The proxy exposes Prometheus metrics on port <code>2112</code>. A small local
+      Prometheus deployment scrapes that endpoint every five seconds, and the
+      provisioned Grafana dashboard visualises the result. No dashboard clicking or
+      datasource setup is required: <code>make deploy</code> creates both services,
+      and <code>make grafana</code> opens the dashboard on
+      <code>localhost:3000</code>.
     </p>
-
     <figure>
-      <img src="img/istio-mesh.png" alt="Istio mesh dashboard in Grafana showing 1.42K requests per second total, with collapser-proxy receiving 1.36K req/s and hello-backend receiving 56.38 req/s, both at 100% success.">
+      <img src="img/grafana-collapser-10000-requests.jpg" alt="Grafana dashboard for Collapser showing 10,000 requests, 3 backend calls, about 5,000 collapsed requests, about 5,000 cache hits, and 99.84 millisecond p95 backend latency.">
       <figcaption>
-        Istio mesh dashboard. The sidecar takes 1.36K&nbsp;req/s; the backend behind
-        it sees 56&nbsp;req/s. Same traffic, both measured by Envoy.
+        A fresh 10,000-request local run. Only 3 calls reached the backend: 5,079
+        requests joined an in-flight call and 4,918 were served from the 100&nbsp;ms
+        result cache. The dashboard rounds the backend-load reduction to 100%; the
+        measured value is 99.97%. Multiple backend calls are expected here because
+        the burst lasts longer than the cache TTL.
       </figcaption>
     </figure>
-
-    <figure>
-      <img src="img/kiali-graph.png" alt="Kiali traffic graph showing loadgen sending traffic to collapser-proxy, which sends traffic to hello-backend, all edges healthy at 100 percent success.">
-      <figcaption>
-        Kiali, same window. The lock icons are Istio's mTLS between workloads &mdash;
-        the sidecar itself speaks plaintext and never knows about it.
-      </figcaption>
-    </figure>
-
-    <p class="note">
-      Over that run: 584,000 requests reached the sidecar and 24,304 reached the
-      backend. The ratio is capped by how many distinct payloads the generator uses,
-      not by the sidecar &mdash; with one payload it collapses to a single call.
-    </p>
   </section>
 
   <section>
@@ -299,7 +336,7 @@ footer p { font-family: var(--mono); font-size: 12px; color: var(--fg-dim); marg
         <span>
           Because the backend call runs on a detached context, incoming headers never
           made it through on unary calls &mdash; while the streaming path forwarded
-          them correctly. Inside a mesh that quietly breaks trace propagation.
+          them correctly. That quietly breaks trace propagation.
         </span>
       </li>
       <li>
@@ -342,7 +379,7 @@ footer p { font-family: var(--mono); font-size: 12px; color: var(--fg-dim); marg
   </section>
 
   <footer>
-    <p>Varun Singh &middot; Go, gRPC, Kubernetes, Istio</p>
+    <p>Varun Singh &middot; Go, gRPC, Docker, Kubernetes, kind</p>
   </footer>
 
 </div>

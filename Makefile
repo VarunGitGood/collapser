@@ -1,5 +1,5 @@
 .PHONY: help build test clean run lint proto stress bench docker docker-backend \
-        cluster cluster-down deploy demo undeploy fmt vet check race deps
+        cluster cluster-down deploy demo grafana prometheus undeploy fmt vet check race deps
 
 # Variables
 BINARY_NAME=collapser
@@ -11,7 +11,6 @@ CLIENT_PATH=./cmd/client/main.go
 # Docker variables
 DOCKER_IMAGE=collapser-proxy
 BACKEND_IMAGE=collapser-backend
-LOADGEN_IMAGE=collapser-loadgen
 DOCKER_TAG=latest
 
 # Cluster variables
@@ -132,29 +131,35 @@ deps-vendor: ## Vendor dependencies
 # Container & Cluster Targets
 # ============================================================================
 
-docker: ## Build the proxy, backend and load generator images
+docker: ## Build the Collapser sidecar and backend images
 	@docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) --target proxy .
 	@docker build -t $(BACKEND_IMAGE):$(DOCKER_TAG) --target backend .
-	@docker build -t $(LOADGEN_IMAGE):$(DOCKER_TAG) --target loadgen .
 
-cluster: ## Create a local kind cluster with Istio installed
+cluster: ## Create a local kind cluster in Docker
 	@./deploy/scripts/cluster-up.sh
 
-deploy: docker ## Load images into kind and apply the k8s + Istio manifests
+deploy: docker ## Load images into kind and deploy Collapser, Prometheus and Grafana
 	@kind load docker-image $(DOCKER_IMAGE):$(DOCKER_TAG) --name $(KIND_CLUSTER)
 	@kind load docker-image $(BACKEND_IMAGE):$(DOCKER_TAG) --name $(KIND_CLUSTER)
-	@kind load docker-image $(LOADGEN_IMAGE):$(DOCKER_TAG) --name $(KIND_CLUSTER)
-	@kubectl apply -f deploy/k8s/
-	@kubectl apply -f deploy/istio/
-	@kubectl rollout status deploy/collapser-proxy --timeout=180s
+	@kubectl apply -f deploy/k8s/backend.yaml -f deploy/k8s/proxy.yaml
+	@kubectl apply -f deploy/observability/prometheus.yaml
+	@kubectl apply -f deploy/observability/grafana.yaml
 	@kubectl rollout status deploy/hello-backend --timeout=180s
+	@kubectl rollout status deploy/prometheus -n observability --timeout=180s
+	@kubectl rollout status deploy/grafana -n observability --timeout=180s
 
 demo: ## Drive load through the deployed proxy and print the collapse ratio
 	@./deploy/scripts/demo.sh
 
+grafana: ## Open Grafana locally at http://localhost:3000 (Ctrl-C to stop)
+	@kubectl -n observability port-forward svc/grafana 3000:3000
+
+prometheus: ## Open Prometheus locally at http://localhost:9090 (Ctrl-C to stop)
+	@kubectl -n observability port-forward svc/prometheus 9090:9090
+
 undeploy: ## Remove the workloads, keep the cluster
-	@kubectl delete -f deploy/istio/ --ignore-not-found
-	@kubectl delete -f deploy/k8s/ --ignore-not-found
+	@kubectl delete -f deploy/observability/ --ignore-not-found
+	@kubectl delete -f deploy/k8s/backend.yaml -f deploy/k8s/proxy.yaml --ignore-not-found
 
 cluster-down: ## Delete the local kind cluster
 	@kind delete cluster --name $(KIND_CLUSTER)

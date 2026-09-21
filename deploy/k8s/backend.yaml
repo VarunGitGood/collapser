@@ -27,6 +27,31 @@ spec:
           resources:
             requests: {cpu: 50m, memory: 32Mi}
             limits: {cpu: 500m, memory: 128Mi}
+        # Collapser is the application sidecar. It receives traffic through the
+        # collapser-proxy Service and calls this backend over the pod's loopback
+        # interface, so duplicate requests are absorbed before leaving the pod.
+        - name: collapser
+          image: collapser-proxy:latest
+          imagePullPolicy: Never
+          ports:
+            - {name: grpc-collapser, containerPort: 50052}
+            - {name: metrics, containerPort: 2112}
+          env:
+            - {name: BACKEND_ADDRESS, value: "localhost:50051"}
+            - {name: COLLAPSER_CACHE_DURATION, value: "100ms"}
+            - {name: COLLAPSER_MAX_CACHE_ENTRIES, value: "10000"}
+            - {name: LOG_FORMAT, value: "json"}
+          livenessProbe:
+            httpGet: {path: /health, port: metrics}
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /ready, port: metrics}
+            initialDelaySeconds: 1
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: 1000m, memory: 256Mi}
 ---
 apiVersion: v1
 kind: Service
@@ -36,7 +61,4 @@ metadata:
 spec:
   selector: {app: hello-backend}
   ports:
-    # Istio routes by port name; the grpc- prefix is what makes it parse HTTP/2
-    # and produce per-RPC telemetry instead of treating this as opaque TCP.
-    - {name: grpc-hello, port: 50051, targetPort: grpc}
     - {name: http-stats, port: 8080, targetPort: stats}

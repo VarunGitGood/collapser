@@ -1,20 +1,21 @@
 # Contributing to Collapser
 
-Thank you for your interest in contributing to Collapser!
+Collapser is a Go gRPC request-deduplication sidecar with a local Docker/kind
+demonstration environment.
 
-## Development Setup
+## Development setup
 
-1. Install Go 1.21 or later
-2. Clone the repository:
-   ```bash
-   git clone https://github.com/VarunGitGood/collapser-grpc.git
-   cd collapser-grpc
-   ```
+Install Go 1.25.5 or later, then clone the project and download its modules:
 
-3. Install dependencies:
-   ```bash
-   make deps
-   ```
+```bash
+git clone https://github.com/VarunGitGood/collapser.git
+cd collapser
+make deps
+```
+
+For the local Kubernetes demonstration, also install Docker, kind and kubectl.
+`make cluster` creates the cluster in Docker; `make deploy` builds the local
+images, loads them into kind and applies the sidecar manifests.
 
 ## Building
 
@@ -34,14 +35,15 @@ make test
 - Run `make vet` to check for common issues
 - Run `make lint` to run the linter (requires golangci-lint)
 
-## Project Structure
+## Project structure
 
 ```
 .
 ├── cmd/           # Main applications
-├── pkg/           # Public library code
-├── internal/      # Private application code
-├── api/           # Protocol definitions (proto files)
+├── internal/      # Deduplication engine, gRPC proxy and observability
+├── proto/         # Demo service definition and committed generated stubs
+├── deploy/        # kind, Kubernetes and measurement artifacts
+├── site/          # Static GitHub Pages project page
 └── Makefile       # Build and test commands
 ```
 
