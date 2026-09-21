@@ -5,6 +5,9 @@ identical in-flight requests into one upstream call. It is a systems-design
 learning project built around one question: how do you stop a burst of duplicate
 reads from becoming a thundering herd at the backend?
 
+Read the accompanying systems-design walkthrough at
+[varungitgood.github.io/collapser](https://varungitgood.github.io/collapser/).
+
 In the Kubernetes demo, the backend pod has two containers: Collapser listens on
 port `50052`, then sends the one surviving request to the backend on
 `localhost:50051`. Docker builds the containers and kind runs the local
@@ -152,6 +155,13 @@ anonymous access enabled, so no login is required. Run `make demo`, wait about
 shows requests, backend calls, collapsed requests, cache hits, backend load
 removed, and p95 latency; the lower panels show the same values over time.
 
+![Grafana dashboard from a 10,000-request Collapser run](site/img/grafana-collapser-10000-requests.jpg)
+
+In the captured run, 10,000 identical requests resulted in 3 backend calls:
+5,079 requests joined an in-flight call and 4,918 were served from the result
+cache. That is a 99.97% backend-load reduction. Three calls are expected for a
+burst this long because it outlasts the 100 ms cache TTL.
+
 For scrape troubleshooting, open Prometheus with `make prometheus`, then visit
 <http://localhost:9090/targets>. The `collapser` target should be **UP**.
 
@@ -279,6 +289,8 @@ cmd/client     concurrent demo client (CONCURRENCY, PROXY_ADDRESS)
 internal/collapser   deduplication engine, TTL cache, metrics
 internal/proxy       gRPC handler, passthrough codec, key derivation
 deploy/k8s           Sidecar Deployment + Services
+deploy/observability Local Prometheus + provisioned Grafana dashboard
 deploy/scripts       cluster-up.sh, demo.sh
 deploy/evidence      raw measurement output
+site                 Published systems-design walkthrough and Grafana capture
 ```
