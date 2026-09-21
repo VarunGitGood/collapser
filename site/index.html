@@ -1,387 +1,688 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>collapser · systems-design lab</title>
-<meta name="description" content="A systems-design learning project: a Go gRPC deduplication sidecar, built with Docker and run locally on kind.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
-<style>
-:root {
-  --bg:      #ffffff;
-  --bg-sub:  #fafafa;
-  --fg:      #111111;
-  --fg-mid:  #555555;
-  --fg-dim:  #8a8a8a;
-  --border:  #e6e6e6;
-  --border-2:#d4d4d4;
-  --sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg:      #0a0a0a;
-    --bg-sub:  #121212;
-    --fg:      #ededed;
-    --fg-mid:  #a1a1a1;
-    --fg-dim:  #6f6f6f;
-    --border:  #262626;
-    --border-2:#383838;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #0a0a0a; --bg-sub: #121212; --fg: #ededed;
-  --fg-mid: #a1a1a1; --fg-dim: #6f6f6f; --border: #262626; --border-2: #383838;
-}
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>collapser · systems-design lab</title>
+    <meta
+      name="description"
+      content="A systems-design learning project: a Go gRPC deduplication sidecar, built with Docker and run locally on kind."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+    />
+    <style>
+      :root {
+        --bg: #ffffff;
+        --bg-sub: #fafafa;
+        --fg: #111111;
+        --fg-mid: #555555;
+        --fg-dim: #8a8a8a;
+        --border: #e6e6e6;
+        --border-2: #d4d4d4;
+        --sans:
+          Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --mono:
+          "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          --bg: #0a0a0a;
+          --bg-sub: #121212;
+          --fg: #ededed;
+          --fg-mid: #a1a1a1;
+          --fg-dim: #6f6f6f;
+          --border: #262626;
+          --border-2: #383838;
+        }
+      }
+      :root[data-theme="dark"] {
+        --bg: #0a0a0a;
+        --bg-sub: #121212;
+        --fg: #ededed;
+        --fg-mid: #a1a1a1;
+        --fg-dim: #6f6f6f;
+        --border: #262626;
+        --border-2: #383838;
+      }
 
-* { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        -webkit-text-size-adjust: 100%;
+      }
 
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--fg);
-  font-family: var(--sans);
-  font-size: 15px;
-  line-height: 1.65;
-  letter-spacing: -0.011em;
-  -webkit-font-smoothing: antialiased;
-}
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: var(--sans);
+        font-size: 15px;
+        line-height: 1.65;
+        letter-spacing: -0.011em;
+        -webkit-font-smoothing: antialiased;
+      }
 
-.wrap { max-width: 720px; margin: 0 auto; padding: 0 24px; }
+      .wrap {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 0 24px;
+      }
 
-/* ── head ──────────────────────────────────────────────── */
-.top { padding: 88px 0 0; }
-h1 {
-  font-size: 15px; font-weight: 500; margin: 0 0 28px;
-  font-family: var(--mono); letter-spacing: -0.02em;
-}
-.lede { font-size: 21px; line-height: 1.5; letter-spacing: -0.02em; margin: 0 0 18px; max-width: 34em; }
-.sub { color: var(--fg-mid); margin: 0 0 30px; max-width: 36em; }
+      /* ── head ──────────────────────────────────────────────── */
+      .top {
+        padding: 88px 0 0;
+      }
+      h1 {
+        font-size: 15px;
+        font-weight: 500;
+        margin: 0 0 28px;
+        font-family: var(--mono);
+        letter-spacing: -0.02em;
+      }
+      .lede {
+        font-size: 21px;
+        line-height: 1.5;
+        letter-spacing: -0.02em;
+        margin: 0 0 18px;
+        max-width: 34em;
+      }
+      .sub {
+        color: var(--fg-mid);
+        margin: 0 0 30px;
+        max-width: 36em;
+      }
 
-.links { display: flex; gap: 18px; flex-wrap: wrap; padding-bottom: 56px; }
-.links a {
-  font-size: 13.5px; color: var(--fg); text-decoration: none;
-  border-bottom: 1px solid var(--border-2); padding-bottom: 1px;
-}
-.links a:hover { border-bottom-color: var(--fg); }
-.links a:focus-visible { outline: 2px solid var(--fg); outline-offset: 3px; }
+      .links {
+        display: flex;
+        gap: 18px;
+        flex-wrap: wrap;
+        padding-bottom: 56px;
+      }
+      .links a {
+        font-size: 13.5px;
+        color: var(--fg);
+        text-decoration: none;
+        border-bottom: 1px solid var(--border-2);
+        padding-bottom: 1px;
+      }
+      .links a:hover {
+        border-bottom-color: var(--fg);
+      }
+      .links a:focus-visible {
+        outline: 2px solid var(--fg);
+        outline-offset: 3px;
+      }
 
-/* ── sections ──────────────────────────────────────────── */
-section { padding: 44px 0; border-top: 1px solid var(--border); }
-h2 {
-  font-size: 12px; font-weight: 500; margin: 0 0 22px;
-  font-family: var(--mono); color: var(--fg-dim);
-  letter-spacing: 0.04em;
-}
-h3 { font-size: 15px; font-weight: 600; margin: 30px 0 8px; letter-spacing: -0.015em; }
-p { margin: 0 0 15px; color: var(--fg-mid); max-width: 36em; }
-p.tight { margin-bottom: 8px; }
-strong { color: var(--fg); font-weight: 600; }
-code {
-  font-family: var(--mono); font-size: 12.5px;
-  background: var(--bg-sub); border: 1px solid var(--border);
-  padding: 1px 5px; border-radius: 4px; color: var(--fg);
-}
+      /* ── sections ──────────────────────────────────────────── */
+      section {
+        padding: 44px 0;
+        border-top: 1px solid var(--border);
+      }
+      h2 {
+        font-size: 12px;
+        font-weight: 500;
+        margin: 0 0 22px;
+        font-family: var(--mono);
+        color: var(--fg-dim);
+        letter-spacing: 0.04em;
+      }
+      h3 {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 30px 0 8px;
+        letter-spacing: -0.015em;
+      }
+      p {
+        margin: 0 0 15px;
+        color: var(--fg-mid);
+        max-width: 36em;
+      }
+      p.tight {
+        margin-bottom: 8px;
+      }
+      strong {
+        color: var(--fg);
+        font-weight: 600;
+      }
+      code {
+        font-family: var(--mono);
+        font-size: 12.5px;
+        background: var(--bg-sub);
+        border: 1px solid var(--border);
+        padding: 1px 5px;
+        border-radius: 4px;
+        color: var(--fg);
+      }
 
-/* ── tables ────────────────────────────────────────────── */
-.scroll { overflow-x: auto; margin: 4px 0 6px; }
-table { border-collapse: collapse; width: 100%; font-size: 13.5px; min-width: 460px; }
-th, td { text-align: left; padding: 9px 14px 9px 0; border-bottom: 1px solid var(--border); white-space: nowrap; }
-th {
-  font-family: var(--mono); font-size: 11px; font-weight: 400;
-  color: var(--fg-dim); letter-spacing: 0.03em;
-}
-td { color: var(--fg-mid); }
-td:first-child { color: var(--fg); }
-.n { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; padding-right: 0; }
-th.n { text-align: right; }
-.key { color: var(--fg); font-weight: 500; }
-tbody tr:last-child td { border-bottom: 0; }
+      /* ── tables ────────────────────────────────────────────── */
+      .scroll {
+        overflow-x: auto;
+        margin: 4px 0 6px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 13.5px;
+        min-width: 460px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 9px 14px 9px 0;
+        border-bottom: 1px solid var(--border);
+        white-space: nowrap;
+      }
+      th {
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 400;
+        color: var(--fg-dim);
+        letter-spacing: 0.03em;
+      }
+      td {
+        color: var(--fg-mid);
+      }
+      td:first-child {
+        color: var(--fg);
+      }
+      .n {
+        font-family: var(--mono);
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+        padding-right: 0;
+      }
+      th.n {
+        text-align: right;
+      }
+      .key {
+        color: var(--fg);
+        font-weight: 500;
+      }
+      tbody tr:last-child td {
+        border-bottom: 0;
+      }
 
-.note { font-size: 13px; color: var(--fg-dim); max-width: 38em; margin: 14px 0 0; }
+      .note {
+        font-size: 13px;
+        color: var(--fg-dim);
+        max-width: 38em;
+        margin: 14px 0 0;
+      }
 
-/* ── callout list ──────────────────────────────────────── */
-.found { margin: 0; padding: 0; list-style: none; }
-.found li { padding: 16px 0; border-bottom: 1px solid var(--border); }
-.found li:last-child { border-bottom: 0; padding-bottom: 0; }
-.found b { display: block; color: var(--fg); font-weight: 600; font-size: 14.5px; margin-bottom: 4px; }
-.found span { color: var(--fg-mid); font-size: 14px; }
+      /* ── callout list ──────────────────────────────────────── */
+      .found {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .found li {
+        padding: 16px 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .found li:last-child {
+        border-bottom: 0;
+        padding-bottom: 0;
+      }
+      .found b {
+        display: block;
+        color: var(--fg);
+        font-weight: 600;
+        font-size: 14.5px;
+        margin-bottom: 4px;
+      }
+      .found span {
+        color: var(--fg-mid);
+        font-size: 14px;
+      }
 
-ul.plain { margin: 0; padding-left: 18px; }
-ul.plain li { color: var(--fg-mid); margin-bottom: 9px; max-width: 36em; }
+      ul.plain {
+        margin: 0;
+        padding-left: 18px;
+      }
+      ul.plain li {
+        color: var(--fg-mid);
+        margin-bottom: 9px;
+        max-width: 36em;
+      }
 
-/* ── architecture ─────────────────────────────────────── */
-.flow { display: grid; gap: 8px; margin: 22px 0 18px; }
-.node { border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; background: var(--bg-sub); }
-.node b { display: block; color: var(--fg); font-size: 14px; margin-bottom: 2px; }
-.node span { color: var(--fg-mid); font-size: 13px; }
-.arrow { color: var(--fg-dim); font: 15px/1 var(--mono); padding-left: 16px; }
-.command { margin: 18px 0 0; padding: 14px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-sub); overflow-x: auto; }
-.command code { border: 0; background: transparent; padding: 0; white-space: pre; line-height: 1.8; }
+      /* ── architecture ─────────────────────────────────────── */
+      .flow {
+        display: grid;
+        gap: 8px;
+        margin: 22px 0 18px;
+      }
+      .node {
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 14px 16px;
+        background: var(--bg-sub);
+      }
+      .node b {
+        display: block;
+        color: var(--fg);
+        font-size: 14px;
+        margin-bottom: 2px;
+      }
+      .node span {
+        color: var(--fg-mid);
+        font-size: 13px;
+      }
+      .arrow {
+        color: var(--fg-dim);
+        font: 15px/1 var(--mono);
+        padding-left: 16px;
+      }
+      .command {
+        margin: 18px 0 0;
+        padding: 14px 16px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--bg-sub);
+        overflow-x: auto;
+      }
+      .command code {
+        border: 0;
+        background: transparent;
+        padding: 0;
+        white-space: pre;
+        line-height: 1.8;
+      }
 
-/* ── captures ─────────────────────────────────────────── */
-figure { margin: 22px 0 0; }
-figure img { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 6px; background: #0d0d0d; }
-figcaption { font-size: 12.5px; color: var(--fg-dim); margin-top: 10px; max-width: 48em; }
+      /* ── captures ─────────────────────────────────────────── */
+      figure {
+        margin: 22px 0 0;
+      }
+      figure img {
+        display: block;
+        width: 100%;
+        height: auto;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: #0d0d0d;
+      }
+      figcaption {
+        font-size: 12.5px;
+        color: var(--fg-dim);
+        margin-top: 10px;
+        max-width: 48em;
+      }
 
-footer { padding: 40px 0 80px; border-top: 1px solid var(--border); }
-footer p { font-family: var(--mono); font-size: 12px; color: var(--fg-dim); margin: 0; }
-</style>
-</head>
-<body>
-<div class="wrap">
+      footer {
+        padding: 40px 0 80px;
+        border-top: 1px solid var(--border);
+      }
+      footer p {
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--fg-dim);
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="top">
+        <h1>collapser / systems-design lab</h1>
+        <p class="lede">
+          A gRPC sidecar that collapses duplicate in-flight requests into one
+          backend call.
+        </p>
+        <p class="sub">
+          I built this to learn how request deduplication, Docker and Kubernetes
+          behave together not just how they are supposed to work on a diagram.
+          This page records the design, the local infrastructure, the
+          measurements and the mistakes.
+        </p>
+        <div class="links">
+          <a href="https://github.com/VarunGitGood/collapser">Source</a>
+          <a
+            href="https://github.com/VarunGitGood/collapser/blob/main/deploy/evidence/results.txt"
+            >Raw measurements</a
+          >
+        </div>
+      </div>
 
-  <div class="top">
-    <h1>collapser / systems-design lab</h1>
-    <p class="lede">A gRPC sidecar that collapses duplicate in-flight requests into one backend call.</p>
-    <p class="sub">
-      I built this to learn how request deduplication, Docker and Kubernetes
-      behave together—not just how they are supposed to work on a diagram. This page
-      records the design, the local infrastructure, the measurements and the mistakes.
-    </p>
-    <div class="links">
-      <a href="https://github.com/VarunGitGood/collapser">Source</a>
-      <a href="https://github.com/VarunGitGood/collapser/blob/main/deploy/evidence/results.txt">Raw measurements</a>
+      <section>
+        <h2>System at a glance</h2>
+        <p>
+          The problem is a small version of the thundering-herd problem: a burst
+          of identical reads can overwhelm a backend even though one answer
+          would satisfy every caller. Collapser is the deduplication layer
+          between those callers and the backend.
+        </p>
+        <div
+          class="flow"
+          aria-label="Request flow from clients through collapser to the backend"
+        >
+          <div class="node">
+            <b>Clients / demo client</b
+            ><span>Many identical gRPC requests arrive together.</span>
+          </div>
+          <div class="arrow" aria-hidden="true">↓ N requests</div>
+          <div class="node">
+            <b>Collapser sidecar</b
+            ><span
+              >Runs beside the backend; keys requests by method, payload and
+              selected headers, then shares one leader result with
+              followers.</span
+            >
+          </div>
+          <div class="arrow" aria-hidden="true">↓ 1 local gRPC call</div>
+          <div class="node">
+            <b>Hello backend</b
+            ><span
+              >Its neighbor in the same pod—a deliberately slow service that
+              counts every request it receives.</span
+            >
+          </div>
+        </div>
+        <p class="note">
+          In Kubernetes, Collapser is a real application sidecar: it runs in the
+          same pod as the backend, receives gRPC requests on port
+          <code>50052</code>, and calls the backend on
+          <code>localhost:50051</code>. The application path needs no external
+          service; Prometheus and Grafana are optional local observability
+          containers deployed alongside it.
+        </p>
+      </section>
+
+      <section>
+        <h2>What it does</h2>
+        <p>
+          When several callers ask a service the same question at the same time,
+          the service answers it once per caller. The proxy sits in front and
+          gives them all the same answer from a single backend call.
+        </p>
+        <p>
+          The first request for a given key calls the backend. Anything arriving
+          while that call is in flight waits on the same result instead of
+          starting its own. A short result cache (100&nbsp;ms) covers the gap
+          just after a call finishes.
+        </p>
+        <p>
+          A normal gRPC service does not know that two independently arriving
+          requests are the <em>same</em> request. That is the gap this sidecar
+          fills.
+        </p>
+      </section>
+
+      <section>
+        <h2>
+          Local infrastructure: Docker →
+          <a href="https://kind.sigs.k8s.io/">kind</a>
+        </h2>
+        <p>
+          This is a reproducible local lab, not a cloud deployment.
+          <strong>kind</strong>
+          creates Kubernetes nodes as Docker containers, so Docker is both the
+          image builder and the machine that runs the cluster. No image registry
+          is needed.
+        </p>
+        <div class="scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Step</th>
+                <th>What happens</th>
+                <th>Why it matters</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="key">1. Build</td>
+                <td>
+                  Multi-stage Dockerfile produces the Collapser sidecar and
+                  backend images.
+                </td>
+                <td>Same artifacts locally and in Kubernetes.</td>
+              </tr>
+              <tr>
+                <td class="key">2. Create cluster</td>
+                <td>kind creates a local Kubernetes cluster inside Docker.</td>
+                <td>
+                  Real pods, Services and container networking on one machine.
+                </td>
+              </tr>
+              <tr>
+                <td class="key">3. Load + deploy</td>
+                <td>
+                  <code>kind load docker-image</code> copies local images into
+                  the nodes, then manifests create the workloads.
+                </td>
+                <td>Fast iteration without publishing images.</td>
+              </tr>
+              <tr>
+                <td class="key">4. Measure</td>
+                <td>
+                  The included Go client sends identical requests; the backend
+                  counter verifies the result.
+                </td>
+                <td>The collapse ratio is observed at the destination.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="command" aria-label="Commands to run the local lab">
+          <code
+            ># prerequisites: Docker, kind and kubectl on PATH make cluster #
+            local Kubernetes cluster running in Docker make deploy # docker
+            build → kind load → app + Prometheus + Grafana make demo # burst
+            traffic and print backend calls make grafana # open the provisioned
+            dashboard on localhost:3000 make cluster-down # remove the local
+            cluster</code
+          >
+        </div>
+        <p class="note">
+          In the Dockerfile, each target starts from <code>scratch</code> and
+          runs as a non-root user. In the Kubernetes manifests, the images use
+          <code>imagePullPolicy: Never</code> because kind already has the
+          locally loaded image.
+        </p>
+      </section>
+
+      <section>
+        <h2>Benchmarks</h2>
+        <p class="tight">
+          Three separate paths, benchmarked separately. Mixing them in one
+          benchmark is the mistake I made first.
+        </p>
+        <div class="scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Path</th>
+                <th class="n">Time</th>
+                <th class="n">Bytes</th>
+                <th class="n">Allocs</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="key">Cache hit</td>
+                <td class="n">45.7 ns</td>
+                <td class="n">0 B</td>
+                <td class="n">0</td>
+              </tr>
+              <tr>
+                <td class="key">Joining an in-flight call</td>
+                <td class="n">backend-bound</td>
+                <td class="n">54 B</td>
+                <td class="n">0</td>
+              </tr>
+              <tr>
+                <td class="key">Leading a call</td>
+                <td class="n">1,594 ns</td>
+                <td class="n">552 B</td>
+                <td class="n">10</td>
+              </tr>
+              <tr>
+                <td class="key">No Collapser (baseline)</td>
+                <td class="n">0.33 ns</td>
+                <td class="n">0 B</td>
+                <td class="n">0</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">
+          Go 1.25.5, 11th Gen Core i7-1165G7, 8 threads. For the join path the
+          number of allocations is what matters, not time. A waiter's wall clock
+          is just however long the backend takes. Zero allocations there is the
+          result of waiters sharing one channel instead of each registering
+          their own.
+        </p>
+
+        <h3>Under load, in process</h3>
+        <div class="scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Test</th>
+                <th class="n">Requests</th>
+                <th class="n">Backend calls</th>
+                <th class="n">Errors</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="key">10,000 concurrent, one key</td>
+                <td class="n">10,000</td>
+                <td class="n">2</td>
+                <td class="n">0</td>
+              </tr>
+              <tr>
+                <td class="key">60 s sustained, 100 workers</td>
+                <td class="n">391,400</td>
+                <td class="n">392</td>
+                <td class="n">0</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">
+          Race detector on. Goroutine count and heap were flat across 100,000
+          requests.
+        </p>
+      </section>
+
+      <section>
+        <h2>Run the Kubernetes demo</h2>
+        <p>
+          The local demo sends a burst through the Collapser Service into the
+          sidecar container. It then prints the backend's own call count and the
+          collapse ratio. That keeps the measurement honest: the sidecar cannot
+          claim more load reduction than the backend actually sees.
+        </p>
+        <div class="command">
+          <code>make cluster && make deploy && make demo</code>
+        </div>
+      </section>
+
+      <section>
+        <h2>What Grafana sees</h2>
+        <p>
+          The proxy exposes Prometheus metrics on port <code>2112</code>. A
+          small local Prometheus deployment scrapes that endpoint every five
+          seconds, and the provisioned Grafana dashboard visualises the result.
+          No dashboard clicking or datasource setup is required:
+          <code>make deploy</code> creates both services, and
+          <code>make grafana</code> opens the dashboard on
+          <code>localhost:3000</code>.
+        </p>
+        <figure>
+          <img
+            src="img/grafana-collapser-10000-requests.jpg"
+            alt="Grafana dashboard for Collapser showing 10,000 requests, 3 backend calls, about 5,000 collapsed requests, about 5,000 cache hits, and 99.84 millisecond p95 backend latency."
+          />
+          <figcaption>
+            A fresh 10,000-request local run. Only 3 calls reached the backend:
+            5,079 requests joined an in-flight call and 4,918 were served from
+            the 100&nbsp;ms result cache. The dashboard rounds the backend-load
+            reduction to 100%; the measured value is 99.97%. Multiple backend
+            calls are expected here because the burst lasts longer than the
+            cache TTL.
+          </figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>What I got wrong</h2>
+        <p>
+          These were all in the version I had already written up before I went
+          back and measured properly.
+        </p>
+        <ul class="found">
+          <li>
+            <b>My headline benchmark measured the wrong thing.</b>
+            <span>
+              The "high contention" benchmark used a backend slower than the
+              cache TTL, so nearly every iteration was a cache hit rather than
+              an actual collapse. It reported 61&nbsp;ns/op; the dedicated cache
+              benchmark reported 58. Same code path, and I had been quoting it
+              as the collapse number.
+            </span>
+          </li>
+          <li>
+            <b>The collapse path was not allocation-free, so I made it one.</b>
+            <span>
+              Each waiter allocated its own channel and got appended to a slice.
+              Measured honestly that was 3 allocations per request. Replacing it
+              with a single channel the leader closes brought it to zero and
+              deleted about 45 lines, including the locking that the channel now
+              handles.
+            </span>
+          </li>
+          <li>
+            <b>The default could serve one caller's data to another.</b>
+            <span>
+              Two callers sending identical payloads shared a response even when
+              authenticated as different users. Headers the backend varies on
+              now have to be named in <code>COLLAPSER_KEY_HEADERS</code> so
+              those requests stay separate. This one bothers me most, because
+              the code looked correct.
+            </span>
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Limitations</h2>
+        <ul class="plain">
+          <li>
+            Server-streaming calls are treated as unary. Without a service
+            descriptor the proxy can't tell them apart on the incoming
+            connection, so only the first response frame comes back.
+            Client-streaming and bidi are detected and skip collapsing entirely.
+          </li>
+          <li>
+            Each replica collapses on its own, so N replicas can still make N
+            backend calls for the same key. Sharing that state across replicas
+            would cost the latency the whole thing exists to save.
+          </li>
+          <li>
+            The passthrough codec registers itself globally under the name
+            <code>proto</code>. That is what makes the proxy work without
+            generated stubs, but it means the package can't be imported into a
+            process that needs normal protobuf marshalling.
+          </li>
+          <li>
+            Everything here was measured on one laptop and a local cluster. I
+            have not run it against real production traffic.
+          </li>
+        </ul>
+      </section>
+
+      <footer>
+        <p>
+          <a href="https://vrun.in">Varun Singh</a>&middot; Go, gRPC, Docker,
+          Kubernetes, kind
+        </p>
+      </footer>
     </div>
-  </div>
-
-  <section>
-    <h2>System at a glance</h2>
-    <p>
-      The problem is a small version of the thundering-herd problem: a burst of
-      identical reads can overwhelm a backend even though one answer would satisfy
-      every caller. Collapser is the deduplication layer between those callers and
-      the backend.
-    </p>
-    <div class="flow" aria-label="Request flow from clients through collapser to the backend">
-      <div class="node"><b>Clients / demo client</b><span>Many identical gRPC requests arrive together.</span></div>
-      <div class="arrow" aria-hidden="true">↓ N requests</div>
-      <div class="node"><b>Collapser sidecar</b><span>Runs beside the backend; keys requests by method, payload and selected headers, then shares one leader result with followers.</span></div>
-      <div class="arrow" aria-hidden="true">↓ 1 local gRPC call</div>
-      <div class="node"><b>Hello backend</b><span>Its neighbor in the same pod—a deliberately slow service that counts every request it receives.</span></div>
-    </div>
-    <p class="note">
-      In Kubernetes, Collapser is a real application sidecar: it runs in the same
-      pod as the backend, receives gRPC requests on port <code>50052</code>, and
-      calls the backend on <code>localhost:50051</code>. The application path needs
-      no external service; Prometheus and Grafana are optional local observability
-      containers deployed alongside it.
-    </p>
-  </section>
-
-  <section>
-    <h2>What it does</h2>
-    <p>
-      When several callers ask a service the same question at the same time, the
-      service answers it once per caller. The proxy sits in front and gives them
-      all the same answer from a single backend call.
-    </p>
-    <p>
-      The first request for a given key calls the backend. Anything arriving while
-      that call is in flight waits on the same result instead of starting its own.
-      A short result cache (100&nbsp;ms) covers the gap just after a call finishes.
-    </p>
-    <p>
-      A normal gRPC service does not know that two independently arriving requests
-      are the <em>same</em> request. That is the gap this sidecar fills.
-    </p>
-  </section>
-
-  <section>
-    <h2>Local infrastructure: Docker → kind</h2>
-    <p>
-      This is a reproducible local lab, not a cloud deployment. <strong>kind</strong>
-      creates Kubernetes nodes as Docker containers, so Docker is both the image
-      builder and the machine that runs the cluster. No image registry is needed.
-    </p>
-    <div class="scroll">
-      <table>
-        <thead>
-          <tr><th>Step</th><th>What happens</th><th>Why it matters</th></tr>
-        </thead>
-        <tbody>
-          <tr><td class="key">1. Build</td><td>Multi-stage Dockerfile produces the Collapser sidecar and backend images.</td><td>Same artifacts locally and in Kubernetes.</td></tr>
-          <tr><td class="key">2. Create cluster</td><td>kind creates a local Kubernetes cluster inside Docker.</td><td>Real pods, Services and container networking on one machine.</td></tr>
-          <tr><td class="key">3. Load + deploy</td><td><code>kind load docker-image</code> copies local images into the nodes, then manifests create the workloads.</td><td>Fast iteration without publishing images.</td></tr>
-          <tr><td class="key">4. Measure</td><td>The included Go client sends identical requests; the backend counter verifies the result.</td><td>The collapse ratio is observed at the destination.</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <div class="command" aria-label="Commands to run the local lab"><code># prerequisites: Docker, kind and kubectl on PATH
-make cluster       # local Kubernetes cluster running in Docker
-make deploy        # docker build → kind load → app + Prometheus + Grafana
-make demo          # burst traffic and print backend calls
-make grafana       # open the provisioned dashboard on localhost:3000
-make cluster-down  # remove the local cluster</code></div>
-    <p class="note">
-      In the Dockerfile, each target starts from <code>scratch</code> and runs as a
-      non-root user. In the Kubernetes manifests, the images use
-      <code>imagePullPolicy: Never</code> because kind already has the locally loaded image.
-    </p>
-  </section>
-
-  <section>
-    <h2>Benchmarks</h2>
-    <p class="tight">
-      Three separate paths, benchmarked separately. Mixing them in one benchmark is
-      the mistake I made first — see below.
-    </p>
-    <div class="scroll">
-      <table>
-        <thead>
-          <tr><th>Path</th><th class="n">Time</th><th class="n">Bytes</th><th class="n">Allocs</th></tr>
-        </thead>
-        <tbody>
-          <tr><td class="key">Cache hit</td><td class="n">45.7 ns</td><td class="n">0 B</td><td class="n">0</td></tr>
-          <tr><td class="key">Joining an in-flight call</td><td class="n">backend-bound</td><td class="n">54 B</td><td class="n">0</td></tr>
-          <tr><td class="key">Leading a call</td><td class="n">1,594 ns</td><td class="n">552 B</td><td class="n">10</td></tr>
-          <tr><td class="key">No Collapser (baseline)</td><td class="n">0.33 ns</td><td class="n">0 B</td><td class="n">0</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="note">
-      Go 1.25.5, 11th Gen Core i7-1165G7, 8 threads. For the join path the number
-      that means anything is allocations, not time — a waiter's wall clock is just
-      however long the backend takes. Zero allocations there is the result of
-      waiters sharing one channel instead of each registering their own.
-    </p>
-
-    <h3>Under load, in process</h3>
-    <div class="scroll">
-      <table>
-        <thead>
-          <tr><th>Test</th><th class="n">Requests</th><th class="n">Backend calls</th><th class="n">Errors</th></tr>
-        </thead>
-        <tbody>
-          <tr><td class="key">10,000 concurrent, one key</td><td class="n">10,000</td><td class="n">2</td><td class="n">0</td></tr>
-          <tr><td class="key">60 s sustained, 100 workers</td><td class="n">391,400</td><td class="n">392</td><td class="n">0</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="note">
-      Race detector on. Goroutine count and heap were flat across 100,000 requests.
-    </p>
-  </section>
-
-  <section>
-    <h2>Run the Kubernetes demo</h2>
-    <p>
-      The local demo sends a burst through the Collapser Service into the sidecar
-      container. It then prints the backend's own call count and the collapse ratio.
-      That keeps the measurement honest: the sidecar cannot claim more load
-      reduction than the backend actually sees.
-    </p>
-    <div class="command"><code>make cluster && make deploy && make demo</code></div>
-  </section>
-
-  <section>
-    <h2>What Grafana sees</h2>
-    <p>
-      The proxy exposes Prometheus metrics on port <code>2112</code>. A small local
-      Prometheus deployment scrapes that endpoint every five seconds, and the
-      provisioned Grafana dashboard visualises the result. No dashboard clicking or
-      datasource setup is required: <code>make deploy</code> creates both services,
-      and <code>make grafana</code> opens the dashboard on
-      <code>localhost:3000</code>.
-    </p>
-    <figure>
-      <img src="img/grafana-collapser-10000-requests.jpg" alt="Grafana dashboard for Collapser showing 10,000 requests, 3 backend calls, about 5,000 collapsed requests, about 5,000 cache hits, and 99.84 millisecond p95 backend latency.">
-      <figcaption>
-        A fresh 10,000-request local run. Only 3 calls reached the backend: 5,079
-        requests joined an in-flight call and 4,918 were served from the 100&nbsp;ms
-        result cache. The dashboard rounds the backend-load reduction to 100%; the
-        measured value is 99.97%. Multiple backend calls are expected here because
-        the burst lasts longer than the cache TTL.
-      </figcaption>
-    </figure>
-  </section>
-
-  <section>
-    <h2>What I got wrong</h2>
-    <p>
-      These were all in the version I had already written up before I went back and
-      measured properly.
-    </p>
-    <ul class="found">
-      <li>
-        <b>My headline benchmark measured the wrong thing.</b>
-        <span>
-          The "high contention" benchmark used a backend slower than the cache TTL,
-          so nearly every iteration was a cache hit rather than an actual collapse.
-          It reported 61&nbsp;ns/op; the dedicated cache benchmark reported 58. Same
-          code path, and I had been quoting it as the collapse number.
-        </span>
-      </li>
-      <li>
-        <b>The collapse path was not allocation-free, so I made it one.</b>
-        <span>
-          Each waiter allocated its own channel and got appended to a slice. Measured
-          honestly that was 3 allocations per request. Replacing it with a single
-          channel the leader closes brought it to zero and deleted about 45 lines,
-          including the locking that the channel now handles.
-        </span>
-      </li>
-      <li>
-        <b>The repo did not compile from a fresh clone.</b>
-        <span>
-          Generated protobuf files were gitignored and nothing regenerated them.
-          Anyone cloning it got a build error on the first command.
-        </span>
-      </li>
-      <li>
-        <b>Request metadata was silently dropped.</b>
-        <span>
-          Because the backend call runs on a detached context, incoming headers never
-          made it through on unary calls &mdash; while the streaming path forwarded
-          them correctly. That quietly breaks trace propagation.
-        </span>
-      </li>
-      <li>
-        <b>The default could serve one caller's data to another.</b>
-        <span>
-          Two callers sending identical payloads shared a response even when
-          authenticated as different users. Headers the backend varies on now have to
-          be named in <code>COLLAPSER_KEY_HEADERS</code> so those requests stay
-          separate. This one bothers me most, because the code looked correct.
-        </span>
-      </li>
-    </ul>
-  </section>
-
-  <section>
-    <h2>Limitations</h2>
-    <ul class="plain">
-      <li>
-        Server-streaming calls are treated as unary. Without a service descriptor the
-        proxy can't tell them apart on the incoming connection, so only the first
-        response frame comes back. Client-streaming and bidi are detected and skip
-        collapsing entirely.
-      </li>
-      <li>
-        Each replica collapses on its own, so N replicas can still make N backend
-        calls for the same key. Sharing that state across replicas would cost the
-        latency the whole thing exists to save.
-      </li>
-      <li>
-        The passthrough codec registers itself globally under the name
-        <code>proto</code>. That is what makes the proxy work without generated
-        stubs, but it means the package can't be imported into a process that needs
-        normal protobuf marshalling.
-      </li>
-      <li>
-        Everything here was measured on one laptop and a local cluster. I have not
-        run it against real production traffic.
-      </li>
-    </ul>
-  </section>
-
-  <footer>
-    <p>Varun Singh &middot; Go, gRPC, Docker, Kubernetes, kind</p>
-  </footer>
-
-</div>
-</body>
+  </body>
 </html>
